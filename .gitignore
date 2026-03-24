@@ -1,0 +1,11 @@
+node_modules/
+.nuxt/
+.output/
+.env
+__pycache__/
+*.pyc
+.DS_Store
+dist/
+.vscode/
+.idea/
+*.egg-info/

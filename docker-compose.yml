@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    container_name: fo_intel_db
+    environment:
+      POSTGRES_DB: fo_intel
+      POSTGRES_USER: fointel
+      POSTGRES_PASSWORD: fointel
+    ports:
+      - "5434:5432"
+    volumes:
+      - fo_intel_db:/var/lib/postgresql/data
+
+volumes:
+  fo_intel_db:
