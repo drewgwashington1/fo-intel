@@ -9,3 +9,6 @@ dist/
 .vscode/
 .idea/
 *.egg-info/
+.venv/
+credentials/
+key/

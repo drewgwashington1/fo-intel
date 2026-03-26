@@ -264,7 +264,10 @@ def organic_export(days: int = Query(30), db: Session = Depends(get_db)):
     return _csv_response([dict(r) for r in rows], "organic_performance.csv")
 
 
-# ── Paid Performance ─────────────────────────────────────────────────
+# ── Paid Performance (Google Ads API + Transparency Center) ──────────
+# Data sources:
+#   - paid_performance / search_terms (Google Ads API) → spend, CPC, IS, campaigns
+#   - competitor_ads (Transparency Center) → ad creatives for firstorion.com
 
 @router.get("/paid/overview")
 def paid_overview(days: int = Query(30), db: Session = Depends(get_db)):
@@ -298,12 +301,21 @@ def paid_overview(days: int = Query(30), db: Session = Depends(get_db)):
         FROM paid_performance WHERE data_date >= :prev_start AND data_date < :prev_end
     """), {"prev_start": prev_start, "prev_end": prev_end}).mappings().first()
 
+    # Also include Transparency Center ad count
+    tc = db.execute(text("""
+        SELECT COUNT(*) AS total_ads,
+               COUNT(*) FILTER (WHERE is_active) AS active_ads
+        FROM competitor_ads WHERE competitor_domain = 'firstorion.com'
+    """)).mappings().first()
+
     result = dict(current)
     result["prev_spend"] = float(previous["total_spend"])
     result["prev_clicks"] = previous["total_clicks"]
     result["prev_cpc"] = float(previous["avg_cpc"])
     result["prev_conversions"] = float(previous["total_conversions"])
     result["prev_impression_share"] = float(previous["avg_impression_share"])
+    result["tc_total_ads"] = tc["total_ads"]
+    result["tc_active_ads"] = tc["active_ads"]
     return result
 
 
@@ -330,19 +342,51 @@ def paid_campaigns(days: int = Query(30), db: Session = Depends(get_db)):
 
 @router.get("/paid/search-terms")
 def paid_search_terms(days: int = Query(30), limit: int = Query(25), db: Session = Depends(get_db)):
+    """Search terms enriched with organic position data from GSC."""
     start = _period(days)
     rows = db.execute(text("""
-        SELECT search_term, match_type,
-               SUM(clicks) AS clicks,
-               SUM(cost_micros) / 1000000.0 AS cost,
-               SUM(impressions) AS impressions,
-               SUM(conversions) AS conversions,
-               CASE WHEN SUM(clicks) > 0
-                    THEN ROUND(SUM(cost_micros)::numeric / SUM(clicks) / 1000000.0, 2)
-                    ELSE 0 END AS cpc
-        FROM search_terms WHERE data_date >= :start
-        GROUP BY search_term, match_type ORDER BY clicks DESC LIMIT :lim
+        SELECT
+            st.search_term,
+            st.match_type,
+            SUM(st.clicks) AS clicks,
+            SUM(st.cost_micros) / 1000000.0 AS cost,
+            SUM(st.impressions) AS volume,
+            SUM(st.conversions) AS conversions,
+            CASE WHEN SUM(st.clicks) > 0
+                 THEN ROUND(SUM(st.cost_micros)::numeric / SUM(st.clicks) / 1000000.0, 2)
+                 ELSE 0 END AS cpc,
+            org.organic_traffic,
+            org.organic_position,
+            org.top_url
+        FROM search_terms st
+        LEFT JOIN LATERAL (
+            SELECT
+                SUM(op.clicks) AS organic_traffic,
+                ROUND(AVG(op.position)::numeric, 1) AS organic_position,
+                (ARRAY_AGG(op.page ORDER BY op.clicks DESC))[1] AS top_url
+            FROM organic_performance op
+            WHERE op.query = st.search_term
+              AND op.data_date >= :start
+        ) org ON true
+        WHERE st.data_date >= :start
+        GROUP BY st.search_term, st.match_type, org.organic_traffic, org.organic_position, org.top_url
+        ORDER BY SUM(st.clicks) DESC
+        LIMIT :lim
     """), {"start": start, "lim": limit}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/paid/ads")
+def paid_ads(db: Session = Depends(get_db)):
+    """First Orion's own ads from Transparency Center."""
+    rows = db.execute(text("""
+        SELECT ad_id, ad_format, headline, description, destination_url,
+               platforms, regions, first_shown_date, last_shown_date,
+               days_running, is_active, advertiser_name, image_url
+        FROM competitor_ads
+        WHERE competitor_domain = 'firstorion.com'
+        ORDER BY days_running DESC
+    """)).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -362,7 +406,6 @@ def paid_timeline(days: int = Query(90), db: Session = Depends(get_db)):
 
 @router.get("/paid/is-loss")
 def paid_is_loss(days: int = Query(30), db: Session = Depends(get_db)):
-    """Impression share loss breakdown by campaign — budget vs rank."""
     start = _period(days)
     rows = db.execute(text("""
         SELECT campaign_name,
@@ -373,6 +416,41 @@ def paid_is_loss(days: int = Query(30), db: Session = Depends(get_db)):
         FROM paid_performance WHERE data_date >= :start
         GROUP BY campaign_name ORDER BY lost_rank_pct DESC
     """), {"start": start}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/paid/pages")
+def paid_pages(days: int = Query(30), db: Session = Depends(get_db)):
+    """Landing pages receiving paid traffic, cross-referenced with organic data."""
+    start = _period(days)
+    rows = db.execute(text("""
+        SELECT
+            op.page AS url,
+            COUNT(DISTINCT st.search_term) AS ads_keywords,
+            SUM(op.clicks) AS organic_traffic,
+            SUM(op.impressions) AS impressions,
+            ROUND(AVG(op.ctr)::numeric, 4) AS ctr,
+            ROUND(AVG(op.position)::numeric, 1) AS avg_position,
+            COUNT(DISTINCT op.query) AS total_keywords
+        FROM organic_performance op
+        INNER JOIN search_terms st ON op.query = st.search_term
+        WHERE op.data_date >= :start AND st.data_date >= :start
+        GROUP BY op.page
+        ORDER BY organic_traffic DESC
+        LIMIT 30
+    """), {"start": start}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/paid/ad-formats")
+def paid_ad_formats(db: Session = Depends(get_db)):
+    rows = db.execute(text("""
+        SELECT ad_format, COUNT(*) AS count,
+               COUNT(*) FILTER (WHERE is_active) AS active_count
+        FROM competitor_ads
+        WHERE competitor_domain = 'firstorion.com'
+        GROUP BY ad_format ORDER BY count DESC
+    """)).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -438,7 +516,7 @@ def ai_platforms(days: int = Query(30), db: Session = Depends(get_db)):
 
 
 @router.get("/ai/competitors")
-def ai_competitors(days: int = Query(30), db: Session = Depends(get_db)):
+def ai_competitors(days: int = Query(30), limit: int = Query(15), db: Session = Depends(get_db)):
     start = _period(days)
     rows = db.execute(text("""
         SELECT competitor_domain,
@@ -446,7 +524,8 @@ def ai_competitors(days: int = Query(30), db: Session = Depends(get_db)):
                SUM(citation_count) AS citations
         FROM ai_competitors WHERE data_date >= :start
         GROUP BY competitor_domain ORDER BY avg_sov DESC
-    """), {"start": start}).mappings().all()
+        LIMIT :lim
+    """), {"start": start, "lim": limit}).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -460,10 +539,20 @@ def ai_sov_comparison(days: int = Query(30), db: Session = Depends(get_db)):
         GROUP BY category_name
     """), {"start": start}).mappings().all()
 
+    # Only include top 10 competitors by SOV to avoid overwhelming the chart
     comp_rows = db.execute(text("""
         SELECT category_name, competitor_domain,
                ROUND(AVG(share_of_voice)::numeric, 4) AS comp_sov
-        FROM ai_competitors WHERE data_date >= :start
+        FROM ai_competitors
+        WHERE data_date >= :start
+          AND competitor_domain IN (
+            SELECT competitor_domain
+            FROM ai_competitors
+            WHERE data_date >= :start
+            GROUP BY competitor_domain
+            ORDER BY AVG(share_of_voice) DESC
+            LIMIT 10
+          )
         GROUP BY category_name, competitor_domain
     """), {"start": start}).mappings().all()
 
@@ -511,6 +600,118 @@ def ai_citation_timeline(days: int = Query(30), db: Session = Depends(get_db)):
         GROUP BY data_date ORDER BY data_date
     """), {"start": start}).mappings().all()
     return [dict(r) for r in rows]
+
+
+@router.get("/ai/topics")
+def ai_topics(days: int = Query(30)):
+    """Top AI topics where First Orion appears — from Profound API."""
+    from config import app_settings
+    import requests as req
+
+    start = _period(days).isoformat()
+    end = date.today().isoformat()
+
+    try:
+        resp = req.post(
+            "https://api.tryprofound.com/v1/reports/visibility",
+            headers={"X-API-Key": app_settings.PROFOUND_API_KEY, "Content-Type": "application/json"},
+            json={
+                "category_id": app_settings.PROFOUND_CATEGORY_ID,
+                "start_date": start,
+                "end_date": end,
+                "metrics": ["visibility_score", "share_of_voice"],
+                "dimensions": ["topic"],
+                "filters": [{"field": "asset_name", "operator": "is", "value": "First Orion"}],
+                "pagination": {"limit": 30},
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return [
+            {
+                "topic": item["dimensions"][0],
+                "visibility": round(item["metrics"][1] * 100, 1) if item["metrics"][1] <= 1 else round(item["metrics"][1], 1),
+                "sov": round(item["metrics"][0] * 100, 1),
+            }
+            for item in result.get("data", [])
+        ]
+    except Exception:
+        return []
+
+
+@router.get("/ai/prompts")
+def ai_prompts(days: int = Query(30)):
+    """Top AI prompts where First Orion is mentioned — from Profound API."""
+    from config import app_settings
+    import requests as req
+
+    start = _period(days).isoformat()
+    end = date.today().isoformat()
+
+    try:
+        resp = req.post(
+            "https://api.tryprofound.com/v1/reports/visibility",
+            headers={"X-API-Key": app_settings.PROFOUND_API_KEY, "Content-Type": "application/json"},
+            json={
+                "category_id": app_settings.PROFOUND_CATEGORY_ID,
+                "start_date": start,
+                "end_date": end,
+                "metrics": ["visibility_score", "share_of_voice"],
+                "dimensions": ["prompt"],
+                "filters": [{"field": "asset_name", "operator": "is", "value": "First Orion"}],
+                "pagination": {"limit": 30},
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return [
+            {
+                "prompt": item["dimensions"][0],
+                "visibility": round(item["metrics"][1] * 100, 1) if item["metrics"][1] <= 1 else round(item["metrics"][1], 1),
+                "sov": round(item["metrics"][0] * 100, 1),
+            }
+            for item in result.get("data", [])
+        ]
+    except Exception:
+        return []
+
+
+@router.get("/ai/cited-urls")
+def ai_cited_urls(days: int = Query(30)):
+    """Top cited URLs across all domains — from Profound API."""
+    from config import app_settings
+    import requests as req
+
+    start = _period(days).isoformat()
+    end = date.today().isoformat()
+
+    try:
+        resp = req.post(
+            "https://api.tryprofound.com/v1/reports/citations",
+            headers={"X-API-Key": app_settings.PROFOUND_API_KEY, "Content-Type": "application/json"},
+            json={
+                "category_id": app_settings.PROFOUND_CATEGORY_ID,
+                "start_date": start,
+                "end_date": end,
+                "metrics": ["count"],
+                "dimensions": ["url"],
+                "pagination": {"limit": 30},
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return [
+            {
+                "url": item["dimensions"][0],
+                "citations": item["metrics"][0],
+            }
+            for item in result.get("data", [])
+        ]
+    except Exception:
+        return []
 
 
 # ── Competitor Ads ───────────────────────────────────────────────────

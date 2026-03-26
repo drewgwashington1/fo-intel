@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, BigInteger, String, Float, Date, Boolean, DateTime, ARRAY,
-    Index,
+    Text, Index,
 )
 from sqlalchemy.sql import func
 from database import Base
@@ -149,3 +149,57 @@ class CompetitorAd(Base):
         Index("ix_comp_ads_domain", "competitor_domain"),
         Index("ix_comp_ads_scraped", "scraped_date"),
     )
+
+
+class SerpCache(Base):
+    """Cache SERP results per keyword to avoid burning Serper credits."""
+    __tablename__ = "serp_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    keyword = Column(String, nullable=False)
+    queried_date = Column(Date, nullable=False)
+    result_json = Column(Text)
+    credits_used = Column(Integer, default=1)
+    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_serp_cache_keyword", "keyword"),
+        Index("ix_serp_cache_date", "queried_date"),
+    )
+
+
+class PaidKeywordObservation(Base):
+    """Competitor paid keyword observations from SERP data."""
+    __tablename__ = "paid_keyword_observations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    observed_date = Column(Date, nullable=False)
+    keyword = Column(String, nullable=False)
+    advertiser_domain = Column(String, nullable=False)
+    ad_position = Column(Integer)
+    ad_title = Column(String)
+    ad_description = Column(String)
+    ad_display_url = Column(String)
+    ad_destination_url = Column(String)
+    estimated_volume = Column(Integer)
+    estimated_cpc = Column(Float)
+    competition_level = Column(String)
+    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_paid_kw_obs_keyword", "keyword"),
+        Index("ix_paid_kw_obs_domain", "advertiser_domain"),
+        Index("ix_paid_kw_obs_date", "observed_date"),
+    )
+
+
+class SerperCreditLog(Base):
+    """Track Serper API credit usage."""
+    __tablename__ = "serper_credit_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    action = Column(String, nullable=False)
+    credits_used = Column(Integer, nullable=False)
+    keywords_queried = Column(Integer, default=0)
+    notes = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

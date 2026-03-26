@@ -13,11 +13,14 @@ export const useDashboardStore = defineStore('dashboard', {
     organicTopPages: [] as any[],
     organicDevices: [] as any[],
 
-    // Paid
+    // Paid (Google Ads API + Transparency Center)
     paidOverview: null as any,
     paidCampaigns: [] as any[],
     paidSearchTerms: [] as any[],
+    paidAds: [] as any[],
+    paidPages: [] as any[],
     paidTimeline: [] as any[],
+    paidAdFormats: [] as any[],
 
     // AI
     aiOverview: null as any,
@@ -26,6 +29,9 @@ export const useDashboardStore = defineStore('dashboard', {
     aiTopCited: [] as any[],
     aiTimeline: [] as any[],
     aiSovComparison: null as any,
+
+    // Overview
+    overviewLoaded: false,
 
     // Competitor Ads
     compOverview: null as any,
@@ -60,16 +66,22 @@ export const useDashboardStore = defineStore('dashboard', {
     async fetchPaid() {
       const { get } = useApi()
       const days = this.periodDays
-      const [overview, campaigns, searchTerms, timeline] = await Promise.all([
+      const [overview, campaigns, searchTerms, ads, pages, timeline, adFormats] = await Promise.all([
         get('/dashboard/paid/overview', { days }),
         get('/dashboard/paid/campaigns', { days }),
         get('/dashboard/paid/search-terms', { days }),
+        get('/dashboard/paid/ads'),
+        get('/dashboard/paid/pages', { days }),
         get('/dashboard/paid/timeline', { days: Math.max(days, 90) }),
+        get('/dashboard/paid/ad-formats'),
       ])
       this.paidOverview = overview
       this.paidCampaigns = campaigns
       this.paidSearchTerms = searchTerms
+      this.paidAds = ads
+      this.paidPages = pages
       this.paidTimeline = timeline
+      this.paidAdFormats = adFormats
     },
 
     async fetchAI() {
@@ -107,6 +119,24 @@ export const useDashboardStore = defineStore('dashboard', {
       this.compLongestRunning = longestRunning
       this.compNewThisWeek = newThisWeek
       this.compFormats = formats
+    },
+
+    async fetchOverview() {
+      this.loading = true
+      this.error = null
+      try {
+        await Promise.all([
+          this.fetchOrganic(),
+          this.fetchPaid(),
+          this.fetchAI(),
+          this.fetchCompetitors(),
+        ])
+        this.overviewLoaded = true
+      } catch (e: any) {
+        this.error = e.message
+      } finally {
+        this.loading = false
+      }
     },
 
     async fetchAll() {
