@@ -151,6 +151,56 @@ class CompetitorAd(Base):
     )
 
 
+class KeywordList(Base):
+    """User-defined keyword lists for filtering (branded, non-branded, custom)."""
+    __tablename__ = "keyword_lists"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    list_name = Column(String, nullable=False)  # e.g. "branded"
+    term = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_keyword_lists_name", "list_name"),
+    )
+
+
+class AdCreativePerformance(Base):
+    """Daily ad creative performance from Google Ads API."""
+    __tablename__ = "ad_creative_performance"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    data_date = Column(Date, nullable=False)
+    campaign_id = Column(BigInteger)
+    campaign_name = Column(String)
+    ad_group_id = Column(BigInteger)
+    ad_group_name = Column(String)
+    ad_id = Column(BigInteger)
+    ad_type = Column(String)  # RESPONSIVE_SEARCH_AD, EXPANDED_TEXT_AD, etc.
+    headline_1 = Column(String)
+    headline_2 = Column(String)
+    headline_3 = Column(String)
+    description_1 = Column(String)
+    description_2 = Column(String)
+    final_url = Column(String)
+    image_url = Column(String, nullable=True)
+    campaign_type = Column(String, nullable=True)  # SEARCH, DEMAND_GEN, PERFORMANCE_MAX
+    impressions = Column(Integer, default=0)
+    clicks = Column(Integer, default=0)
+    cost_micros = Column(BigInteger, default=0)
+    conversions = Column(Float, default=0.0)
+    conversion_value = Column(Float, default=0.0)
+    ctr = Column(Float, default=0.0)
+    avg_cpc_micros = Column(BigInteger, default=0)
+    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_ad_creative_date", "data_date"),
+        Index("ix_ad_creative_ad_id", "data_date", "ad_id"),
+        Index("ix_ad_creative_campaign", "data_date", "campaign_id"),
+    )
+
+
 class SerpCache(Base):
     """Cache SERP results per keyword to avoid burning Serper credits."""
     __tablename__ = "serp_cache"

@@ -1,0 +1,346 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "last_refreshed": "2026-03-30",
+    "sources": [
+      {
+        "name": "Ahrefs Opportunities Report",
+        "url": "https://help.ahrefs.com/en/articles/9127446-where-can-i-quickly-find-opportunities-to-improve-my-website-s-seo",
+        "last_fetched": "2026-03-30",
+        "content_hash": "44f3004f19e0466fee4629424f974455af8fdbe136874b94f890fd2066292cd3"
+      },
+      {
+        "name": "Ahrefs Low-Hanging Fruit SEO",
+        "url": "https://ahrefs.com/blog/low-hanging-fruit-seo/",
+        "last_fetched": "2026-03-30",
+        "content_hash": "963c0dfc12d111ff820f9e9793baacc3a18641fd7ec53df52fff26ac1ecee120"
+      },
+      {
+        "name": "Google Ads API Recommendations",
+        "url": "https://developers.google.com/google-ads/api/docs/recommendations",
+        "last_fetched": "2026-03-30",
+        "content_hash": "39b3ed14962c095a3b1662ae15b07c57e9884666552f1d022abf8912afe756d7"
+      },
+      {
+        "name": "Clearscope Striking Distance Keywords",
+        "url": "https://www.clearscope.io/blog/what-are-striking-distance-keywords",
+        "last_fetched": "2026-03-30",
+        "content_hash": "b7dd629082e002ca387748fa79d58458368c89dd3215ec954a532f7fdaaad993"
+      }
+    ],
+    "pending_changes": []
+  },
+  "organic": {
+    "low_hanging_fruit": {
+      "source": "Ahrefs Opportunities Report",
+      "description": "Keywords already ranking in positions 4-15 that could rank higher with optimization",
+      "position_min": 4,
+      "position_max": 15,
+      "min_impressions": 100,
+      "priority": {
+        "high": {
+          "min_impressions": 500
+        },
+        "medium": {
+          "min_impressions": 200
+        },
+        "low": {
+          "min_impressions": 0
+        }
+      }
+    },
+    "striking_distance": {
+      "source": "Clearscope / Industry Standard",
+      "description": "Keywords ranking positions 11-20, just shy of page 1",
+      "position_min": 11,
+      "position_max": 20,
+      "min_impressions": 100,
+      "priority": {
+        "high": {
+          "min_impressions": 500
+        },
+        "medium": {
+          "min_impressions": 200
+        },
+        "low": {
+          "min_impressions": 0
+        }
+      }
+    },
+    "low_ctr": {
+      "source": "Ahrefs Opportunities Report",
+      "description": "Keywords in top positions with CTR below average for that position range",
+      "position_max": 5,
+      "min_impressions": 50,
+      "ctr_threshold_multiplier": 0.7,
+      "priority": {
+        "high": {
+          "max_position": 3
+        },
+        "medium": {
+          "max_position": 5
+        }
+      }
+    },
+    "declining_keywords": {
+      "source": "Ahrefs Opportunities Report (Content with Declining Traffic)",
+      "description": "Keywords that dropped significantly in position vs previous period",
+      "min_position_drop": 5,
+      "priority": {
+        "high": {
+          "min_clicks": 100
+        },
+        "medium": {
+          "min_clicks": 30
+        },
+        "low": {
+          "min_clicks": 0
+        }
+      }
+    },
+    "content_gap": {
+      "source": "Ahrefs Opportunities Report (Content Gap)",
+      "description": "Keywords competitors rank for or bid on that FO has no organic presence for",
+      "priority": {
+        "high": {
+          "min_competitor_count": 3
+        },
+        "medium": {
+          "min_competitor_count": 2
+        },
+        "low": {
+          "min_competitor_count": 1
+        }
+      }
+    },
+    "featured_snippets": {
+      "source": "Ahrefs Opportunities Report",
+      "description": "Keywords in positions 2-8 where FO doesn't hold the featured snippet",
+      "position_min": 2,
+      "position_max": 8,
+      "note": "Requires SERP feature data \u2014 not yet available in current pipelines"
+    }
+  },
+  "paid": {
+    "budget_limited": {
+      "source": "Google Ads API (CAMPAIGN_BUDGET)",
+      "description": "Campaigns limited by budget \u2014 losing impression share due to insufficient daily budget",
+      "lost_is_budget_threshold": 0.1,
+      "priority": {
+        "high": {
+          "min_total_lost_pct": 40
+        },
+        "medium": {
+          "min_total_lost_pct": 20
+        },
+        "low": {
+          "min_total_lost_pct": 0
+        }
+      }
+    },
+    "rank_limited": {
+      "source": "Google Ads API (Quality Score / Ad Rank)",
+      "description": "Campaigns losing impression share due to ad rank \u2014 indicates bid or Quality Score issues",
+      "lost_is_rank_threshold": 0.15,
+      "priority": {
+        "high": {
+          "min_total_lost_pct": 40
+        },
+        "medium": {
+          "min_total_lost_pct": 20
+        },
+        "low": {
+          "min_total_lost_pct": 0
+        }
+      }
+    },
+    "organic_paid_overlap": {
+      "source": "Industry standard / Ahrefs Content Gap inverse",
+      "description": "Search terms where FO pays for ads but already ranks organically in top positions",
+      "max_organic_position": 5,
+      "priority": {
+        "high": {
+          "min_cost": 100
+        },
+        "medium": {
+          "min_cost": 30
+        },
+        "low": {
+          "min_cost": 0
+        }
+      }
+    },
+    "high_cpc": {
+      "source": "Google Ads API (bid recommendations)",
+      "description": "Search terms with CPC above threshold",
+      "cpc_threshold": 10.0,
+      "priority": {
+        "high": {
+          "min_cpc": 25
+        },
+        "medium": {
+          "min_cpc": 15
+        },
+        "low": {
+          "min_cpc": 10
+        }
+      }
+    },
+    "competitor_gap": {
+      "source": "Google Ads API (KEYWORD) / Ahrefs Content Gap",
+      "description": "Keywords competitors bid on that FO does not",
+      "priority": {
+        "high": {
+          "min_competitor_count": 3
+        },
+        "medium": {
+          "min_competitor_count": 2
+        },
+        "low": {
+          "min_competitor_count": 1
+        }
+      }
+    }
+  },
+  "ai_visibility": {
+    "platform_gap": {
+      "source": "Profound API methodology",
+      "description": "AI platforms where FO visibility is significantly below cross-platform average",
+      "gap_threshold_multiplier": 0.7,
+      "priority": {
+        "high": {
+          "min_gap_points": 20
+        },
+        "medium": {
+          "min_gap_points": 10
+        },
+        "low": {
+          "min_gap_points": 0
+        }
+      }
+    },
+    "competitor_overtaking": {
+      "source": "Profound API methodology",
+      "description": "Competitors whose SOV increased while FO SOV decreased in the same period",
+      "max_results": 10,
+      "priority": {
+        "high": {
+          "min_sov_gain_pp": 5
+        },
+        "medium": {
+          "min_sov_gain_pp": 2
+        },
+        "low": {
+          "min_sov_gain_pp": 0
+        }
+      }
+    },
+    "uncited_content": {
+      "source": "Cross-reference: GSC organic + Profound citations",
+      "description": "Pages ranking well in organic search but not cited by any AI engine",
+      "max_organic_position": 10,
+      "min_clicks": 20,
+      "priority": {
+        "high": {
+          "min_clicks": 100
+        },
+        "medium": {
+          "min_clicks": 30
+        },
+        "low": {
+          "min_clicks": 0
+        }
+      }
+    },
+    "negative_sentiment": {
+      "source": "Profound API sentiment analysis",
+      "description": "AI citations with negative sentiment detected",
+      "priority": "always_high"
+    }
+  },
+  "competitor": {
+    "new_campaigns": {
+      "source": "Google Ads Transparency Center",
+      "description": "Competitor ads launched in the last 7 days",
+      "lookback_days": 7,
+      "priority": {
+        "high": {
+          "min_new_ads": 5
+        },
+        "medium": {
+          "min_new_ads": 2
+        },
+        "low": {
+          "min_new_ads": 1
+        }
+      }
+    },
+    "long_running_ads": {
+      "source": "Google Ads Transparency Center",
+      "description": "Competitor ads active for extended period \u2014 indicates proven performance",
+      "min_days_running": 60,
+      "priority": {
+        "high": {
+          "min_days": 180
+        },
+        "medium": {
+          "min_days": 90
+        },
+        "low": {
+          "min_days": 60
+        }
+      }
+    },
+    "keyword_overlap": {
+      "source": "Serper SERP data + paid_keyword_observations",
+      "description": "Keywords where multiple competitors are advertising",
+      "min_advertisers": 2,
+      "priority": {
+        "high": {
+          "min_advertisers": 4
+        },
+        "medium": {
+          "min_advertisers": 3
+        },
+        "low": {
+          "min_advertisers": 2
+        }
+      }
+    }
+  },
+  "cross_channel": {
+    "ai_without_organic": {
+      "source": "Cross-reference: Profound citations + GSC organic",
+      "description": "Pages cited by AI engines but ranking poorly or not at all in organic search",
+      "min_organic_position_or_missing": 20,
+      "priority": {
+        "high": {
+          "min_citations": 5
+        },
+        "medium": {
+          "min_citations": 2
+        },
+        "low": {
+          "min_citations": 1
+        }
+      }
+    },
+    "organic_without_ai": {
+      "source": "Cross-reference: GSC organic + Profound citations",
+      "description": "Pages with strong organic performance but no AI engine citations",
+      "max_organic_position": 10,
+      "min_organic_clicks": 50,
+      "priority": {
+        "high": {
+          "min_clicks": 100
+        },
+        "medium": {
+          "min_clicks": 30
+        },
+        "low": {
+          "min_clicks": 0
+        }
+      }
+    }
+  }
+}

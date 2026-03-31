@@ -1,77 +1,48 @@
 <script setup lang="ts">
-import { Bar } from 'vue-chartjs'
-
 const store = useDashboardStore()
 const { get } = useApi()
 
-const platformDist = ref<any[]>([])
 const expandedAd = ref<number | null>(null)
+const activeView = ref('overview')
 
 async function loadAll() {
   await store.fetchCompetitors()
-  platformDist.value = await get('/dashboard/competitors/platform-distribution')
 }
 
 onMounted(() => loadAll())
 
-const fmtNum = (n: number) => n?.toLocaleString() ?? '—'
+const fmtNum = (n: number) => n?.toLocaleString() ?? '--'
 
 function toggleAd(index: number) {
   expandedAd.value = expandedAd.value === index ? null : index
 }
 
-const domainChart = computed(() => {
-  const data = store.compByDomain
-  if (!data?.length) return null
-  return {
-    data: {
-      labels: data.map((d: any) => d.competitor_domain),
-      datasets: [
-        { label: 'Active Ads', data: data.map((d: any) => d.active_ads), backgroundColor: '#3B6BF5' },
-        { label: 'Inactive', data: data.map((d: any) => (d.total_ads - d.active_ads)), backgroundColor: '#8B95A5' },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'y' as const,
-      scales: {
-        x: { stacked: true, grid: { display: false } },
-        y: { stacked: true },
-      },
-    },
+// Group new ads by competitor for actionable view
+const newAdsByCompetitor = computed(() => {
+  const ads = store.compNewThisWeek || []
+  const grouped: Record<string, any[]> = {}
+  for (const ad of ads) {
+    if (!grouped[ad.competitor_domain]) grouped[ad.competitor_domain] = []
+    grouped[ad.competitor_domain].push(ad)
   }
+  return Object.entries(grouped)
+    .map(([domain, ads]) => ({ domain, ads, count: ads.length }))
+    .sort((a, b) => b.count - a.count)
 })
 
-const platformChart = computed(() => {
-  const data = platformDist.value
-  if (!data?.length) return null
-
-  const domains = [...new Set(data.map((d: any) => d.competitor_domain))]
-  const platforms = [...new Set(data.map((d: any) => d.platform))]
-  const colors: Record<string, string> = { Search: '#3B6BF5', YouTube: '#F44444', Display: '#F5A623' }
-
-  return {
-    data: {
-      labels: domains,
-      datasets: platforms.map(platform => ({
-        label: platform,
-        data: domains.map(domain => {
-          const row = data.find((d: any) => d.competitor_domain === domain && d.platform === platform)
-          return row?.count ?? 0
-        }),
-        backgroundColor: colors[platform] || '#8B95A5',
-      })),
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        x: { grid: { display: false } },
-        y: { grid: { display: false } },
-      },
-    },
-  }
+// Identify competitors with most activity change
+const competitorSummaries = computed(() => {
+  const domains = store.compByDomain || []
+  return domains.map((d: any) => {
+    const longestAds = (store.compLongestRunning || []).filter((a: any) => a.competitor_domain === d.competitor_domain)
+    const newAds = (store.compNewThisWeek || []).filter((a: any) => a.competitor_domain === d.competitor_domain)
+    return {
+      ...d,
+      topAds: longestAds.slice(0, 3),
+      newCount: newAds.length,
+      isAggressive: d.active_ads >= 5 || newAds.length >= 3,
+    }
+  })
 })
 
 const formatIcon: Record<string, string> = {
@@ -83,200 +54,168 @@ const formatIcon: Record<string, string> = {
 
 <template>
   <div>
-    <div class="mb-6">
-      <h1 class="text-xl font-semibold text-white">Competitor Ads</h1>
-      <p class="text-sm text-gray-500 mt-0.5">Google Ads Transparency Center &middot; competitor ad creative intelligence</p>
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-xl font-semibold text-gray-900">Competitor Ad Intelligence</h1>
+        <p class="text-sm text-gray-400 mt-0.5">What competitors are running and how long it's been live</p>
+      </div>
+      <div class="flex gap-1 bg-surface-card rounded-lg p-1 border border-surface-border">
+        <button
+          v-for="v in [{ key: 'overview', label: 'By Competitor' }, { key: 'new', label: 'New This Week' }, { key: 'proven', label: 'Proven Ads' }]"
+          :key="v.key"
+          class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+          :class="activeView === v.key ? 'bg-fo-action text-white' : 'text-gray-500 hover:text-gray-900'"
+          @click="activeView = v.key"
+        >{{ v.label }}</button>
+      </div>
     </div>
 
-    <div v-if="store.loading" class="space-y-6">
-      <div class="grid grid-cols-2 lg:grid-cols-5 gap-4"><div v-for="i in 5" :key="i" class="h-28 bg-surface-card rounded-xl animate-pulse" /></div>
+    <div v-if="store.loading" class="space-y-4">
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div v-for="i in 4" :key="i" class="h-24 bg-surface-card rounded-xl border border-surface-border animate-pulse" />
+      </div>
     </div>
 
     <template v-else-if="store.compOverview">
       <!-- KPIs -->
-      <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-        <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Active Ads</p>
-          <p class="text-2xl font-bold text-white">{{ fmtNum(store.compOverview.active_ads) }}</p>
-          <p class="text-xs mt-1 text-gray-500">across {{ store.compOverview.competitors_tracked }} competitors</p>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Competitors Tracked</p>
+          <p class="text-2xl font-bold text-gray-900">{{ store.compOverview.competitors_tracked }}</p>
         </div>
-        <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Total Tracked</p>
-          <p class="text-2xl font-bold text-white">{{ fmtNum(store.compOverview.total_ads) }}</p>
-          <p class="text-xs mt-1 text-gray-500">all time</p>
+        <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Active Ads</p>
+          <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.compOverview.active_ads) }}</p>
         </div>
-        <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Longest Running</p>
-          <p class="text-2xl font-bold text-status-up">{{ store.compOverview.longest_running ?? '—' }}<span class="text-sm font-normal text-gray-500 ml-1">days</span></p>
-        </div>
-        <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Avg Run Time</p>
-          <p class="text-2xl font-bold text-white">{{ store.compOverview.avg_days_running ?? '—' }}<span class="text-sm font-normal text-gray-500 ml-1">days</span></p>
-        </div>
-        <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">New This Week</p>
+        <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">New This Week</p>
           <p class="text-2xl font-bold text-amber">{{ fmtNum(store.compOverview.new_this_week) }}</p>
-          <p class="text-xs mt-1 text-gray-500">launched in last 7 days</p>
+        </div>
+        <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Longest Running</p>
+          <p class="text-2xl font-bold text-status-up">{{ store.compOverview.longest_running ?? '--' }} <span class="text-sm font-normal text-gray-400">days</span></p>
         </div>
       </div>
 
-      <!-- Charts: Ads by Domain + Platform Distribution -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div class="bg-surface-card rounded-xl border border-surface-border p-5">
-          <h2 class="text-sm font-semibold text-white mb-4">Ads by Competitor</h2>
-          <div class="h-56">
-            <Bar v-if="domainChart" :data="domainChart.data" :options="domainChart.options" />
-          </div>
-        </div>
-
-        <div class="bg-surface-card rounded-xl border border-surface-border p-5">
-          <h2 class="text-sm font-semibold text-white mb-4">Platform Distribution</h2>
-          <div class="h-56">
-            <Bar v-if="platformChart" :data="platformChart.data" :options="platformChart.options" />
-          </div>
-        </div>
-      </div>
-
-      <!-- Competitor Breakdown Cards -->
-      <div class="bg-surface-card rounded-xl border border-surface-border mb-6">
-        <div class="px-5 py-4 border-b border-surface-border">
-          <h2 class="text-sm font-semibold text-white">Competitor Overview</h2>
-        </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 p-5">
-          <div v-for="d in store.compByDomain" :key="d.competitor_domain" class="bg-surface rounded-lg p-4 border border-surface-border">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-sm font-semibold text-white">{{ d.competitor_domain }}</span>
-              <span class="text-[10px] uppercase tracking-wider text-gray-500">{{ d.advertiser_name }}</span>
+      <!-- View: By Competitor -->
+      <div v-if="activeView === 'overview'" class="space-y-4">
+        <div
+          v-for="comp in competitorSummaries"
+          :key="comp.competitor_domain"
+          class="bg-surface-card rounded-xl border border-surface-border overflow-hidden"
+        >
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <span class="text-sm font-semibold text-gray-900">{{ comp.competitor_domain }}</span>
+              <span v-if="comp.isAggressive" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-status-down/15 text-status-down">HIGH ACTIVITY</span>
+              <span v-if="comp.newCount > 0" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber/15 text-amber">{{ comp.newCount }} NEW</span>
             </div>
-            <div class="grid grid-cols-3 gap-2 text-center">
-              <div>
-                <p class="text-lg font-bold text-fo-action">{{ d.active_ads }}</p>
-                <p class="text-[10px] text-gray-500">Active</p>
-              </div>
-              <div>
-                <p class="text-lg font-bold text-white">{{ d.max_days_running }}</p>
-                <p class="text-[10px] text-gray-500">Max Days</p>
-              </div>
-              <div>
-                <p class="text-lg font-bold text-gray-400">{{ d.avg_days_running }}</p>
-                <p class="text-[10px] text-gray-500">Avg Days</p>
-              </div>
+            <div class="flex items-center gap-4 text-sm">
+              <span class="text-gray-900 font-medium">{{ comp.active_ads }} active</span>
+              <span class="text-gray-400">{{ comp.total_ads }} total</span>
+              <span class="text-gray-400">avg {{ comp.avg_days_running }} days</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- Ad Creative Cards — Longest Running -->
-      <div class="bg-surface-card rounded-xl border border-surface-border mb-6">
-        <div class="px-5 py-4 border-b border-surface-border">
-          <h2 class="text-sm font-semibold text-white">Top Performing Creatives</h2>
-          <p class="text-xs text-gray-500 mt-0.5">Longest-running active ads &mdash; likely their best performers</p>
-        </div>
-        <div class="divide-y divide-surface-border">
-          <div
-            v-for="(ad, i) in store.compLongestRunning"
-            :key="i"
-            class="hover:bg-surface-hover transition-colors cursor-pointer"
-            @click="toggleAd(i)"
-          >
-            <div class="px-5 py-4 flex items-start gap-4">
-              <!-- Format icon -->
-              <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                :class="{ 'bg-fo-action/10': ad.ad_format === 'TEXT', 'bg-amber/10': ad.ad_format === 'IMAGE', 'bg-status-down/10': ad.ad_format === 'VIDEO' }">
-                <svg class="w-5 h-5" :class="{ 'text-fo-action': ad.ad_format === 'TEXT', 'text-amber': ad.ad_format === 'IMAGE', 'text-status-down': ad.ad_format === 'VIDEO' }"
-                  fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" :d="formatIcon[ad.ad_format] || formatIcon.TEXT" />
-                </svg>
-              </div>
-
-              <!-- Content -->
+          <!-- Top ads for this competitor -->
+          <div v-if="comp.topAds.length" class="border-t border-surface-border divide-y divide-surface-border">
+            <div v-for="ad in comp.topAds" :key="ad.headline" class="px-5 py-3 flex items-center gap-3">
+              <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" :d="formatIcon[ad.ad_format] || formatIcon.TEXT" />
+              </svg>
               <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="text-xs text-gray-500">{{ ad.competitor_domain }}</span>
-                  <span class="inline-flex px-2 py-0.5 rounded text-[10px] font-semibold uppercase"
-                    :class="{ 'bg-fo-action/15 text-fo-action': ad.ad_format === 'TEXT', 'bg-amber/15 text-amber': ad.ad_format === 'IMAGE', 'bg-status-down/15 text-status-down': ad.ad_format === 'VIDEO' }">
-                    {{ ad.ad_format }}
-                  </span>
-                  <span v-if="ad.days_running >= 60" class="inline-flex px-2 py-0.5 rounded text-[10px] font-semibold bg-status-up/15 text-status-up">
-                    TOP PERFORMER
-                  </span>
-                </div>
-                <p class="text-sm font-medium text-white mb-0.5">{{ ad.headline }}</p>
-                <p class="text-xs text-gray-500">{{ ad.days_running }} days &middot; since {{ new Date(ad.first_shown_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
+                <p class="text-sm text-gray-900 truncate">{{ ad.headline }}</p>
+                <p class="text-xs text-gray-400 truncate">{{ ad.description?.slice(0, 80) }}</p>
               </div>
-
-              <!-- Days badge -->
               <div class="text-right shrink-0">
-                <span class="text-lg font-bold" :class="ad.days_running >= 60 ? 'text-status-up' : 'text-white'">{{ ad.days_running }}</span>
-                <p class="text-[10px] text-gray-500">days</p>
+                <span class="text-sm font-medium" :class="ad.days_running >= 90 ? 'text-status-up' : 'text-gray-700'">{{ ad.days_running }}d</span>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
 
-            <!-- Expanded detail -->
-            <div v-if="expandedAd === i" class="px-5 pb-4 ml-14">
-              <div class="bg-surface rounded-lg p-4 border border-surface-border">
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                  <div>
-                    <p class="text-gray-500 uppercase tracking-wider mb-1">Description</p>
-                    <p class="text-gray-300">{{ ad.description }}</p>
+      <!-- View: New This Week -->
+      <div v-if="activeView === 'new'">
+        <div v-if="newAdsByCompetitor.length" class="space-y-4">
+          <div v-for="group in newAdsByCompetitor" :key="group.domain" class="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
+            <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+              <span class="text-sm font-semibold text-gray-900">{{ group.domain }}</span>
+              <span class="text-xs text-amber font-medium">{{ group.count }} new ad{{ group.count > 1 ? 's' : '' }}</span>
+            </div>
+            <div class="divide-y divide-surface-border">
+              <div v-for="ad in group.ads" :key="ad.headline" class="px-5 py-3">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{{ ad.ad_format }}</span>
+                  <span class="text-xs text-gray-400">{{ new Date(ad.first_shown_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }}</span>
+                </div>
+                <p class="text-sm font-medium text-gray-900">{{ ad.headline }}</p>
+                <p v-if="ad.description" class="text-xs text-gray-500 mt-0.5">{{ ad.description }}</p>
+                <p v-if="ad.destination_url" class="text-xs text-fo-action mt-1 truncate">{{ ad.destination_url }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else class="bg-surface-card rounded-xl border border-surface-border p-8 text-center">
+          <p class="text-sm text-gray-500">No new competitor ads detected this week.</p>
+        </div>
+      </div>
+
+      <!-- View: Proven Ads (60+ days) -->
+      <div v-if="activeView === 'proven'">
+        <div class="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
+          <div class="px-5 py-3 border-b border-surface-border">
+            <h3 class="text-sm font-semibold text-gray-900">Ads Running 60+ Days</h3>
+            <p class="text-xs text-gray-400 mt-0.5">Long-running ads indicate strong performance for these competitors</p>
+          </div>
+          <div class="divide-y divide-surface-border">
+            <div
+              v-for="(ad, i) in store.compLongestRunning"
+              :key="i"
+              class="hover:bg-surface-hover transition-colors cursor-pointer"
+              @click="toggleAd(i)"
+            >
+              <div class="px-5 py-4 flex items-start gap-4">
+                <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+                  :class="{ 'bg-fo-action/10': ad.ad_format === 'TEXT', 'bg-amber/10': ad.ad_format === 'IMAGE', 'bg-status-down/10': ad.ad_format === 'VIDEO' }">
+                  <svg class="w-5 h-5" :class="{ 'text-fo-action': ad.ad_format === 'TEXT', 'text-amber': ad.ad_format === 'IMAGE', 'text-status-down': ad.ad_format === 'VIDEO' }"
+                    fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" :d="formatIcon[ad.ad_format] || formatIcon.TEXT" />
+                  </svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="text-sm font-medium text-fo-action">{{ ad.competitor_domain }}</span>
+                    <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{{ ad.ad_format }}</span>
                   </div>
-                  <div>
-                    <p class="text-gray-500 uppercase tracking-wider mb-1">Landing Page</p>
-                    <p class="text-fo-action truncate">{{ ad.destination_url }}</p>
+                  <p class="text-sm text-gray-900">{{ ad.headline }}</p>
+                  <p class="text-xs text-gray-400 mt-1">Running since {{ new Date(ad.first_shown_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
+                </div>
+                <div class="text-right shrink-0">
+                  <span class="text-lg font-bold text-status-up">{{ ad.days_running }}</span>
+                  <p class="text-[10px] text-gray-400">days</p>
+                </div>
+              </div>
+              <div v-if="expandedAd === i" class="px-5 pb-4 ml-14">
+                <div class="bg-surface rounded-lg p-4 border border-surface-border text-xs space-y-2">
+                  <div v-if="ad.description">
+                    <p class="text-gray-400 uppercase tracking-wider mb-1">Ad Copy</p>
+                    <p class="text-gray-700">{{ ad.description }}</p>
                   </div>
-                  <div>
-                    <p class="text-gray-500 uppercase tracking-wider mb-1">Platforms</p>
-                    <div class="flex gap-1.5 mt-0.5">
-                      <span v-for="p in ad.platforms" :key="p" class="inline-flex px-2 py-0.5 rounded bg-surface-hover text-gray-300 text-[10px]">{{ p }}</span>
+                  <div v-if="ad.destination_url">
+                    <p class="text-gray-400 uppercase tracking-wider mb-1">Landing Page</p>
+                    <p class="text-fo-action">{{ ad.destination_url }}</p>
+                  </div>
+                  <div v-if="ad.platforms?.length">
+                    <p class="text-gray-400 uppercase tracking-wider mb-1">Platforms</p>
+                    <div class="flex gap-1.5">
+                      <span v-for="p in ad.platforms" :key="p" class="px-2 py-0.5 rounded bg-surface-hover text-gray-700 text-[10px]">{{ p }}</span>
                     </div>
                   </div>
-                  <div>
-                    <p class="text-gray-500 uppercase tracking-wider mb-1">Advertiser</p>
-                    <p class="text-gray-300">{{ ad.advertiser_name }}</p>
-                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- New This Week -->
-      <div v-if="store.compNewThisWeek?.length" class="bg-surface-card rounded-xl border border-surface-border mb-6">
-        <div class="px-5 py-4 border-b border-surface-border flex items-center gap-2">
-          <h2 class="text-sm font-semibold text-white">New Ads This Week</h2>
-          <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber/15 text-amber">{{ store.compNewThisWeek.length }}</span>
-        </div>
-        <div class="divide-y divide-surface-border">
-          <div v-for="ad in store.compNewThisWeek" :key="ad.headline" class="px-5 py-3 flex items-center gap-4">
-            <svg class="w-4 h-4 shrink-0" :class="{ 'text-fo-action': ad.ad_format === 'TEXT', 'text-amber': ad.ad_format === 'IMAGE', 'text-status-down': ad.ad_format === 'VIDEO' }"
-              fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" :d="formatIcon[ad.ad_format] || formatIcon.TEXT" />
-            </svg>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm text-white truncate">{{ ad.headline }}</p>
-              <p class="text-xs text-gray-500">{{ ad.competitor_domain }} &middot; {{ ad.ad_format }}</p>
-            </div>
-            <span class="text-xs text-gray-500 shrink-0">{{ new Date(ad.first_shown_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Insight Callout -->
-      <div class="border-l-4 border-fo-action bg-surface-card rounded-r-xl p-5">
-        <p class="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Insight</p>
-        <p class="text-sm text-white">
-          <template v-if="store.compLongestRunning?.[0]">
-            {{ store.compLongestRunning[0].competitor_domain }}'s longest-running creative has been active for
-            <strong class="text-status-up">{{ store.compLongestRunning[0].days_running }} days</strong>,
-            targeting "{{ store.compLongestRunning[0].headline }}".
-            Ads running 60+ days are almost certainly profitable — study these for messaging patterns and CTAs.
-          </template>
-          <template v-if="store.compNewThisWeek?.length">
-            {{ store.compNewThisWeek.length }} new ads detected this week across
-            {{ [...new Set(store.compNewThisWeek.map((a: any) => a.competitor_domain))].length }} competitors.
-          </template>
-        </p>
       </div>
     </template>
   </div>

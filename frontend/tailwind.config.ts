@@ -14,24 +14,24 @@ export default {
       },
       colors: {
         fo: {
-          navy: '#0B1026',
+          navy: '#1A2332',
           blue: '#2B4BCC',
           action: '#3B6BF5',
           frost: '#E9F0FF',
         },
         amber: {
-          DEFAULT: '#F5A623',
+          DEFAULT: '#D97706',
         },
         surface: {
-          DEFAULT: '#0E1420',
-          card: '#151D2E',
-          hover: '#1A2540',
-          border: 'rgba(255, 255, 255, 0.08)',
+          DEFAULT: '#F3F4F8',
+          card: '#FFFFFF',
+          hover: '#F0F1F5',
+          border: 'rgba(0, 0, 0, 0.10)',
         },
         status: {
-          up: '#1BB981',
-          down: '#F44444',
-          neutral: '#8B95A5',
+          up: '#16A34A',
+          down: '#DC2626',
+          neutral: '#6B7280',
         },
       },
     },

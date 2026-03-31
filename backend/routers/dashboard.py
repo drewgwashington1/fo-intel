@@ -10,8 +10,66 @@ import csv
 import io
 
 from database import get_db
+from models.db import KeywordList
 
 router = APIRouter()
+
+
+def _tracked_filter(brand: str, db) -> str:
+    """Return SQL WHERE clause to only show tracked keywords.
+
+    Keywords are added by the user to 'branded' or 'non-branded' lists.
+    - brand='branded': only keywords in the branded list
+    - brand='non-branded': only keywords in the non-branded list
+    - brand='all': keywords in either list
+    - If no tracked keywords exist, returns empty string (show everything)
+    """
+    if brand == "branded":
+        rows = db.execute(text("SELECT term FROM keyword_lists WHERE list_name = 'branded'")).fetchall()
+    elif brand == "non-branded":
+        rows = db.execute(text("SELECT term FROM keyword_lists WHERE list_name = 'non-branded'")).fetchall()
+    else:
+        rows = db.execute(text("SELECT term FROM keyword_lists WHERE list_name IN ('branded', 'non-branded')")).fetchall()
+
+    terms = [r[0] for r in rows]
+    if not terms:
+        return "AND 1=0"  # No tracked keywords = show nothing
+
+    conditions = " OR ".join([f"query ILIKE '%{t}%'" for t in terms])
+    return f"AND ({conditions})"
+
+
+# ── Keyword List Management ─────────────────────────────────────────
+
+@router.get("/keyword-lists/{list_name}")
+def get_keyword_list(list_name: str, db=Depends(get_db)):
+    rows = db.execute(text(
+        "SELECT id, term, created_at FROM keyword_lists WHERE list_name = :name ORDER BY term"
+    ), {"name": list_name}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.post("/keyword-lists/{list_name}")
+def add_keyword_term(list_name: str, term: str = Query(...), db=Depends(get_db)):
+    term = term.strip().lower()
+    existing = db.execute(text(
+        "SELECT id FROM keyword_lists WHERE list_name = :name AND term = :term"
+    ), {"name": list_name, "term": term}).first()
+    if existing:
+        return {"status": "exists", "term": term}
+    db.add(KeywordList(list_name=list_name, term=term))
+    db.commit()
+    return {"status": "added", "term": term}
+
+
+@router.delete("/keyword-lists/{list_name}")
+def remove_keyword_term(list_name: str, term: str = Query(...), db=Depends(get_db)):
+    term = term.strip().lower()
+    db.execute(text(
+        "DELETE FROM keyword_lists WHERE list_name = :name AND term = :term"
+    ), {"name": list_name, "term": term})
+    db.commit()
+    return {"status": "removed", "term": term}
 
 
 def _period(days: int) -> date:
@@ -43,11 +101,12 @@ def _csv_response(rows: list[dict], filename: str):
 # ── Organic Performance ──────────────────────────────────────────────
 
 @router.get("/organic/overview")
-def organic_overview(days: int = Query(30), db: Session = Depends(get_db)):
+def organic_overview(days: int = Query(30), brand: str = Query(None), db: Session = Depends(get_db)):
     start = _period(days)
     prev_start, prev_end = _prev_period(days)
+    bf = _tracked_filter(brand, db)
 
-    current = db.execute(text("""
+    current = db.execute(text(f"""
         SELECT
             COALESCE(SUM(clicks), 0) AS total_clicks,
             COALESCE(SUM(impressions), 0) AS total_impressions,
@@ -59,10 +118,10 @@ def organic_overview(days: int = Query(30), db: Session = Depends(get_db)):
                  ELSE 0 END AS avg_position,
             COUNT(DISTINCT query) AS unique_queries,
             COUNT(DISTINCT page) AS unique_pages
-        FROM organic_performance WHERE data_date >= :start
+        FROM organic_performance WHERE data_date >= :start {bf}
     """), {"start": start}).mappings().first()
 
-    previous = db.execute(text("""
+    previous = db.execute(text(f"""
         SELECT
             COALESCE(SUM(clicks), 0) AS total_clicks,
             COALESCE(SUM(impressions), 0) AS total_impressions,
@@ -72,7 +131,7 @@ def organic_overview(days: int = Query(30), db: Session = Depends(get_db)):
             CASE WHEN SUM(impressions) > 0
                  THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1)
                  ELSE 0 END AS avg_position
-        FROM organic_performance WHERE data_date >= :prev_start AND data_date < :prev_end
+        FROM organic_performance WHERE data_date >= :prev_start AND data_date < :prev_end {bf}
     """), {"prev_start": prev_start, "prev_end": prev_end}).mappings().first()
 
     result = dict(current)
@@ -183,22 +242,23 @@ def organic_movements(days: int = Query(7), db: Session = Depends(get_db)):
 
 
 @router.get("/organic/top-queries")
-def organic_top_queries(days: int = Query(30), limit: int = Query(25), db: Session = Depends(get_db)):
+def organic_top_queries(days: int = Query(30), limit: int = Query(25), brand: str = Query(None), db: Session = Depends(get_db)):
     start = _period(days)
     prev_start, prev_end = _prev_period(days)
+    bf = _tracked_filter(brand, db)
 
-    rows = db.execute(text("""
+    rows = db.execute(text(f"""
         WITH current_q AS (
             SELECT query, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
                    ROUND(SUM(clicks)::numeric / NULLIF(SUM(impressions), 0), 4) AS ctr,
                    ROUND((SUM(position * impressions) / NULLIF(SUM(impressions), 0))::numeric, 1) AS avg_position
-            FROM organic_performance WHERE data_date >= :start
+            FROM organic_performance WHERE data_date >= :start {bf}
             GROUP BY query
         ),
         prev_q AS (
             SELECT query, SUM(clicks) AS clicks,
                    ROUND((SUM(position * impressions) / NULLIF(SUM(impressions), 0))::numeric, 1) AS avg_position
-            FROM organic_performance WHERE data_date >= :prev_start AND data_date < :prev_end
+            FROM organic_performance WHERE data_date >= :prev_start AND data_date < :prev_end {bf}
             GROUP BY query
         )
         SELECT c.query, c.clicks, c.impressions, c.ctr, c.avg_position,
@@ -778,6 +838,157 @@ def competitors_formats(db: Session = Depends(get_db)):
         FROM competitor_ads
         GROUP BY ad_format ORDER BY count DESC
     """)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+# ── Ad Creative Performance ─────────────────────────────────────────
+
+@router.get("/creatives/overview")
+def creatives_overview(days: int = Query(30), db: Session = Depends(get_db)):
+    """FO ad creative performance summary."""
+    start = _period(days)
+    prev_start, prev_end = _prev_period(days)
+
+    current = db.execute(text("""
+        SELECT
+            COUNT(DISTINCT ad_id) AS total_creatives,
+            COALESCE(SUM(impressions), 0) AS total_impressions,
+            COALESCE(SUM(clicks), 0) AS total_clicks,
+            CASE WHEN SUM(impressions) > 0
+                 THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4)
+                 ELSE 0 END AS avg_ctr,
+            COALESCE(SUM(cost_micros), 0) / 1000000.0 AS total_spend,
+            COALESCE(SUM(conversions), 0) AS total_conversions,
+            CASE WHEN SUM(clicks) > 0
+                 THEN ROUND(SUM(cost_micros)::numeric / SUM(clicks) / 1000000.0, 2)
+                 ELSE 0 END AS avg_cpc,
+            CASE WHEN SUM(clicks) > 0
+                 THEN ROUND(SUM(conversions)::numeric / SUM(clicks), 4)
+                 ELSE 0 END AS conv_rate
+        FROM ad_creative_performance WHERE data_date >= :start
+    """), {"start": start}).mappings().first()
+
+    previous = db.execute(text("""
+        SELECT
+            COALESCE(SUM(clicks), 0) AS total_clicks,
+            CASE WHEN SUM(impressions) > 0
+                 THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4)
+                 ELSE 0 END AS avg_ctr,
+            COALESCE(SUM(conversions), 0) AS total_conversions,
+            COALESCE(SUM(cost_micros), 0) / 1000000.0 AS total_spend
+        FROM ad_creative_performance WHERE data_date >= :prev_start AND data_date < :prev_end
+    """), {"prev_start": prev_start, "prev_end": prev_end}).mappings().first()
+
+    result = dict(current)
+    result["prev_clicks"] = previous["total_clicks"]
+    result["prev_ctr"] = float(previous["avg_ctr"])
+    result["prev_conversions"] = float(previous["total_conversions"])
+    result["prev_spend"] = float(previous["total_spend"])
+    return result
+
+
+@router.get("/creatives/performance")
+def creatives_performance(days: int = Query(30), campaign_type: str = Query(None), db: Session = Depends(get_db)):
+    """Per-creative performance metrics — FO ads. Optional campaign_type filter."""
+    start = _period(days)
+    type_filter = "AND campaign_type = :ctype" if campaign_type else ""
+    params = {"start": start}
+    if campaign_type:
+        params["ctype"] = campaign_type
+    rows = db.execute(text(f"""
+        SELECT ad_id, ad_type, MAX(campaign_type) AS campaign_type,
+               MAX(headline_1) AS headline_1,
+               MAX(headline_2) AS headline_2,
+               MAX(headline_3) AS headline_3,
+               MAX(description_1) AS description_1,
+               MAX(description_2) AS description_2,
+               MAX(final_url) AS final_url,
+               MAX(campaign_name) AS campaign_name,
+               MAX(ad_group_name) AS ad_group_name,
+               SUM(impressions) AS impressions,
+               SUM(clicks) AS clicks,
+               CASE WHEN SUM(impressions) > 0
+                    THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4)
+                    ELSE 0 END AS ctr,
+               SUM(cost_micros) / 1000000.0 AS cost,
+               CASE WHEN SUM(clicks) > 0
+                    THEN ROUND(SUM(cost_micros)::numeric / SUM(clicks) / 1000000.0, 2)
+                    ELSE 0 END AS cpc,
+               SUM(conversions) AS conversions,
+               CASE WHEN SUM(clicks) > 0
+                    THEN ROUND(SUM(conversions)::numeric / SUM(clicks), 4)
+                    ELSE 0 END AS conv_rate,
+               SUM(conversion_value) AS conv_value,
+               COUNT(DISTINCT data_date) AS days_active
+        FROM ad_creative_performance WHERE data_date >= :start {type_filter}
+        GROUP BY ad_id, ad_type
+        ORDER BY SUM(clicks) DESC
+    """), params).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/creatives/timeline")
+def creatives_timeline(days: int = Query(30), db: Session = Depends(get_db)):
+    """Daily creative performance timeline."""
+    start = _period(days)
+    rows = db.execute(text("""
+        SELECT data_date,
+               SUM(impressions) AS impressions,
+               SUM(clicks) AS clicks,
+               CASE WHEN SUM(impressions) > 0
+                    THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4)
+                    ELSE 0 END AS ctr,
+               SUM(cost_micros) / 1000000.0 AS spend,
+               SUM(conversions) AS conversions
+        FROM ad_creative_performance WHERE data_date >= :start
+        GROUP BY data_date ORDER BY data_date
+    """), {"start": start}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/creatives/by-campaign")
+def creatives_by_campaign(days: int = Query(30), db: Session = Depends(get_db)):
+    """Creative performance grouped by campaign."""
+    start = _period(days)
+    rows = db.execute(text("""
+        SELECT campaign_name,
+               COUNT(DISTINCT ad_id) AS creatives,
+               SUM(impressions) AS impressions,
+               SUM(clicks) AS clicks,
+               CASE WHEN SUM(impressions) > 0
+                    THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4)
+                    ELSE 0 END AS ctr,
+               SUM(cost_micros) / 1000000.0 AS cost,
+               SUM(conversions) AS conversions,
+               CASE WHEN SUM(clicks) > 0
+                    THEN ROUND(SUM(conversions)::numeric / SUM(clicks), 4)
+                    ELSE 0 END AS conv_rate
+        FROM ad_creative_performance WHERE data_date >= :start
+        GROUP BY campaign_name ORDER BY SUM(clicks) DESC
+    """), {"start": start}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.get("/creatives/top-headlines")
+def creatives_top_headlines(days: int = Query(30), db: Session = Depends(get_db)):
+    """Rank headline_1 by performance across all creatives."""
+    start = _period(days)
+    rows = db.execute(text("""
+        SELECT headline_1,
+               SUM(impressions) AS impressions,
+               SUM(clicks) AS clicks,
+               CASE WHEN SUM(impressions) > 0
+                    THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4)
+                    ELSE 0 END AS ctr,
+               SUM(conversions) AS conversions,
+               CASE WHEN SUM(clicks) > 0
+                    THEN ROUND(SUM(conversions)::numeric / SUM(clicks), 4)
+                    ELSE 0 END AS conv_rate,
+               COUNT(DISTINCT ad_id) AS used_in_ads
+        FROM ad_creative_performance
+        WHERE data_date >= :start AND headline_1 IS NOT NULL AND headline_1 != ''
+        GROUP BY headline_1 ORDER BY SUM(clicks) DESC LIMIT 20
+    """), {"start": start}).mappings().all()
     return [dict(r) for r in rows]
 
 

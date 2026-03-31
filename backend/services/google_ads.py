@@ -159,3 +159,193 @@ def fetch_search_terms_data(target_date: date) -> List[dict]:
         logger.error(f"Google Ads search terms fetch failed for {target_date}: {e}")
 
     return rows
+
+
+def fetch_ad_creative_data(target_date: date) -> List[dict]:
+    """Fetch ad-level creative performance for a single day.
+
+    Covers three campaign types:
+      - Search (RSA via ad_group_ad)
+      - Demand Gen (multi-asset via ad_group_ad)
+      - Performance Max (asset groups via asset_group_asset)
+    """
+    client = _get_client()
+    customer_id = app_settings.GOOGLE_ADS_CUSTOMER_ID
+    ga_service = client.get_service("GoogleAdsService")
+    date_str = target_date.strftime("%Y-%m-%d")
+
+    rows = []
+
+    # ── Search + Demand Gen (both live in ad_group_ad) ─────────
+    ad_query = f"""
+        SELECT
+            campaign.id,
+            campaign.name,
+            campaign.advertising_channel_type,
+            ad_group.id,
+            ad_group.name,
+            ad_group_ad.ad.id,
+            ad_group_ad.ad.type,
+            ad_group_ad.ad.responsive_search_ad.headlines,
+            ad_group_ad.ad.responsive_search_ad.descriptions,
+            ad_group_ad.ad.final_urls,
+            ad_group_ad.ad.name,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value,
+            metrics.ctr,
+            metrics.average_cpc
+        FROM ad_group_ad
+        WHERE segments.date = '{date_str}'
+          AND ad_group_ad.status = 'ENABLED'
+          AND metrics.impressions > 0
+    """
+
+    try:
+        response = ga_service.search(customer_id=customer_id, query=ad_query)
+
+        for row in response:
+            ad = row.ad_group_ad.ad
+
+            # Map channel type to campaign type string
+            channel_type = row.campaign.advertising_channel_type
+            channel_map = {
+                2: "SEARCH",
+                3: "DISPLAY",
+                6: "SHOPPING",
+                9: "DEMAND_GEN",
+                10: "DEMAND_GEN",
+                11: "PERFORMANCE_MAX",
+                13: "DEMAND_GEN",
+            }
+            campaign_type = channel_map.get(channel_type, "OTHER")
+            # Also detect by campaign name or ad type if enum mapping misses
+            cname_lower = row.campaign.name.lower()
+            if "demand gen" in cname_lower or "demandgen" in cname_lower:
+                campaign_type = "DEMAND_GEN"
+            elif "pmax" in cname_lower or "performance max" in cname_lower:
+                campaign_type = "PERFORMANCE_MAX"
+            elif "DEMAND_GEN" in ad_type_raw:
+                campaign_type = "DEMAND_GEN"
+
+            # Extract headlines/descriptions — works for RSA and DemandGen
+            headlines = []
+            descriptions = []
+            image_url = None
+
+            if ad.responsive_search_ad:
+                headlines = [h.text for h in ad.responsive_search_ad.headlines[:3]]
+                descriptions = [d.text for d in ad.responsive_search_ad.descriptions[:2]]
+
+            # Fallback: use ad.name as headline if no RSA fields
+            if not headlines and ad.name:
+                headlines = [ad.name]
+
+            final_url = ad.final_urls[0] if ad.final_urls else ""
+
+            ad_type_raw = str(ad.type_)
+            # Handle both int enums and string enums
+            ad_type_map = {
+                "2": "EXPANDED_TEXT_AD",
+                "3": "RESPONSIVE_SEARCH_AD",
+                "15": "RESPONSIVE_SEARCH_AD",
+            }
+            # Clean up "AdType.DEMAND_GEN_..." style strings
+            if "DEMAND_GEN" in ad_type_raw:
+                ad_type = ad_type_raw.replace("AdType.", "")
+            elif "RESPONSIVE_SEARCH" in ad_type_raw:
+                ad_type = "RESPONSIVE_SEARCH_AD"
+            else:
+                ad_type = ad_type_map.get(ad_type_raw, ad_type_raw.replace("AdType.", ""))
+
+            rows.append({
+                "data_date": target_date,
+                "campaign_id": row.campaign.id,
+                "campaign_name": row.campaign.name,
+                "ad_group_id": row.ad_group.id,
+                "ad_group_name": row.ad_group.name,
+                "ad_id": ad.id,
+                "ad_type": ad_type,
+                "campaign_type": campaign_type,
+                "headline_1": headlines[0] if len(headlines) > 0 else "",
+                "headline_2": headlines[1] if len(headlines) > 1 else "",
+                "headline_3": headlines[2] if len(headlines) > 2 else "",
+                "description_1": descriptions[0] if len(descriptions) > 0 else "",
+                "description_2": descriptions[1] if len(descriptions) > 1 else "",
+                "final_url": final_url,
+                "image_url": image_url,
+                "impressions": row.metrics.impressions,
+                "clicks": row.metrics.clicks,
+                "cost_micros": row.metrics.cost_micros,
+                "conversions": row.metrics.conversions,
+                "conversion_value": row.metrics.conversions_value or 0.0,
+                "ctr": row.metrics.ctr or 0.0,
+                "avg_cpc_micros": row.metrics.average_cpc or 0,
+            })
+
+    except GoogleAdsException as ex:
+        logger.error(f"Google Ads ad_group_ad error: {ex.failure.errors[0].message}")
+    except Exception as e:
+        logger.error(f"Google Ads ad_group_ad fetch failed for {target_date}: {e}")
+
+    # ── Performance Max (asset groups) ─────────────────────────
+    pmax_query = f"""
+        SELECT
+            campaign.id,
+            campaign.name,
+            asset_group.id,
+            asset_group.name,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value
+        FROM asset_group
+        WHERE segments.date = '{date_str}'
+          AND asset_group.status = 'ENABLED'
+          AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+          AND metrics.impressions > 0
+    """
+
+    try:
+        response = ga_service.search(customer_id=customer_id, query=pmax_query)
+
+        for row in response:
+            imp = row.metrics.impressions
+            clicks = row.metrics.clicks
+            ctr = clicks / imp if imp > 0 else 0.0
+            avg_cpc = row.metrics.cost_micros // clicks if clicks > 0 else 0
+
+            rows.append({
+                "data_date": target_date,
+                "campaign_id": row.campaign.id,
+                "campaign_name": row.campaign.name,
+                "ad_group_id": row.asset_group.id,
+                "ad_group_name": row.asset_group.name,
+                "ad_id": row.asset_group.id,
+                "ad_type": "PERFORMANCE_MAX_ASSET_GROUP",
+                "campaign_type": "PERFORMANCE_MAX",
+                "headline_1": row.asset_group.name,
+                "headline_2": "",
+                "headline_3": "",
+                "description_1": "",
+                "description_2": "",
+                "final_url": "",
+                "image_url": None,
+                "impressions": imp,
+                "clicks": clicks,
+                "cost_micros": row.metrics.cost_micros,
+                "conversions": row.metrics.conversions,
+                "conversion_value": row.metrics.conversions_value or 0.0,
+                "ctr": round(ctr, 4),
+                "avg_cpc_micros": avg_cpc,
+            })
+
+    except GoogleAdsException as ex:
+        logger.error(f"Google Ads PMax error: {ex.failure.errors[0].message}")
+    except Exception as e:
+        logger.error(f"Google Ads PMax fetch failed for {target_date}: {e}")
+
+    return rows

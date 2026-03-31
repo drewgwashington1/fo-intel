@@ -39,6 +39,18 @@ export const useDashboardStore = defineStore('dashboard', {
     compLongestRunning: [] as any[],
     compNewThisWeek: [] as any[],
     compFormats: [] as any[],
+
+    // Insights
+    insights: null as any,
+    insightsLoading: false,
+
+    // Creatives
+    creativesOverview: null as any,
+    creativesPerformance: [] as any[],
+    creativesTimeline: [] as any[],
+    creativesByCampaign: [] as any[],
+    creativesTopHeadlines: [] as any[],
+    creativesLoading: false,
   }),
 
   actions: {
@@ -46,13 +58,14 @@ export const useDashboardStore = defineStore('dashboard', {
       this.periodDays = days
     },
 
-    async fetchOrganic() {
+    async fetchOrganic(brand: string = 'non-branded') {
       const { get } = useApi()
       const days = this.periodDays
+      const brandParam = brand === 'all' ? undefined : brand
       const [overview, timeline, topQueries, topPages, devices] = await Promise.all([
-        get('/dashboard/organic/overview', { days }),
+        get('/dashboard/organic/overview', { days, brand: brandParam }),
         get('/dashboard/organic/timeline', { days: Math.max(days, 90) }),
-        get('/dashboard/organic/top-queries', { days }),
+        get('/dashboard/organic/top-queries', { days, brand: brandParam }),
         get('/dashboard/organic/top-pages', { days }),
         get('/dashboard/organic/devices', { days }),
       ])
@@ -136,6 +149,42 @@ export const useDashboardStore = defineStore('dashboard', {
         this.error = e.message
       } finally {
         this.loading = false
+      }
+    },
+
+    async fetchInsights() {
+      const { get } = useApi()
+      this.insightsLoading = true
+      try {
+        this.insights = await get('/dashboard/insights', { days: this.periodDays })
+      } catch (e: any) {
+        this.error = e.message
+      } finally {
+        this.insightsLoading = false
+      }
+    },
+
+    async fetchCreatives() {
+      const { get } = useApi()
+      const days = this.periodDays
+      this.creativesLoading = true
+      try {
+        const [overview, performance, timeline, byCampaign, topHeadlines] = await Promise.all([
+          get('/dashboard/creatives/overview', { days }),
+          get('/dashboard/creatives/performance', { days }),
+          get('/dashboard/creatives/timeline', { days: Math.max(days, 30) }),
+          get('/dashboard/creatives/by-campaign', { days }),
+          get('/dashboard/creatives/top-headlines', { days }),
+        ])
+        this.creativesOverview = overview
+        this.creativesPerformance = performance
+        this.creativesTimeline = timeline
+        this.creativesByCampaign = byCampaign
+        this.creativesTopHeadlines = topHeadlines
+      } catch (e: any) {
+        this.error = e.message
+      } finally {
+        this.creativesLoading = false
       }
     },
 

@@ -10,16 +10,7 @@ const periodOptions = [
 const selectedPeriod = ref(periodOptions[1])
 const periodOpen = ref(false)
 
-const tabs = ['Web Analytics', 'Rank Tracker', 'SEO Insights']
-const activeTab = ref('Web Analytics')
-
-const projectLinks = [
-  { label: 'Crawled', count: '1,247' },
-  { label: 'Tracked', count: '312' },
-  { label: 'Structure', count: '89' },
-  { label: 'Internal', count: '3,491' },
-  { label: 'Broken', count: '7' },
-]
+const fmtDollar = (n: number) => n != null ? `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '--'
 
 async function loadOverview() {
   store.setPeriod(selectedPeriod.value.days)
@@ -35,7 +26,7 @@ async function selectPeriod(opt: typeof periodOptions[0]) {
 onMounted(() => loadOverview())
 
 const fmtNum = (n: number) => n?.toLocaleString() ?? '--'
-const fmtPos = (n: number) => n != null ? n.toFixed(1) : '--'
+const fmtPos = (n: number) => n != null ? String(Math.round(n)) : '--'
 const fmtPct = (n: number) => n != null ? `${(n * 100).toFixed(1)}%` : '--'
 
 function delta(current: number, previous: number) {
@@ -47,7 +38,7 @@ function delta(current: number, previous: number) {
 
 function deltaClass(d: { pct: number }, invert = false) {
   const positive = invert ? d.pct < 0 : d.pct > 0
-  return positive ? 'text-status-up' : d.pct === 0 ? 'text-gray-500' : 'text-status-down'
+  return positive ? 'text-status-up' : d.pct === 0 ? 'text-gray-400' : 'text-status-down'
 }
 
 function deltaArrow(d: { pct: number }) {
@@ -79,6 +70,15 @@ const metricCards = computed(() => {
 
   return [
     {
+      label: 'Organic Clicks',
+      value: org ? fmtNum(org.total_clicks) : '--',
+      delta: org ? delta(org.total_clicks, org.prev_clicks) : null,
+      invert: false,
+      sparkData: store.organicTimeline,
+      sparkKey: 'clicks',
+      color: '#16A34A',
+    },
+    {
       label: 'Avg Position',
       value: org ? fmtPos(org.avg_position) : '--',
       delta: org ? delta(org.avg_position, org.prev_position) : null,
@@ -86,24 +86,6 @@ const metricCards = computed(() => {
       sparkData: store.organicTimeline,
       sparkKey: 'avg_position',
       color: '#3B6BF5',
-    },
-    {
-      label: 'Keywords',
-      value: org ? fmtNum(org.unique_queries) : '--',
-      delta: null,
-      invert: false,
-      sparkData: store.organicTimeline,
-      sparkKey: 'clicks',
-      color: '#F5A623',
-    },
-    {
-      label: 'Organic Clicks',
-      value: org ? fmtNum(org.total_clicks) : '--',
-      delta: org ? delta(org.total_clicks, org.prev_clicks) : null,
-      invert: false,
-      sparkData: store.organicTimeline,
-      sparkKey: 'clicks',
-      color: '#1BB981',
     },
     {
       label: 'Paid Clicks',
@@ -115,6 +97,15 @@ const metricCards = computed(() => {
       color: '#3B6BF5',
     },
     {
+      label: 'Ad Spend',
+      value: paid ? fmtDollar(paid.total_spend) : '--',
+      delta: paid ? delta(paid.total_spend, paid.prev_spend) : null,
+      invert: true,
+      sparkData: store.paidTimeline,
+      sparkKey: 'spend',
+      color: '#D97706',
+    },
+    {
       label: 'AI Visibility',
       value: ai ? fmtPct(ai.avg_visibility) : '--',
       delta: ai ? delta(ai.avg_visibility, ai.prev_visibility) : null,
@@ -124,13 +115,13 @@ const metricCards = computed(() => {
       color: '#8B5CF6',
     },
     {
-      label: 'Active Comp Ads',
+      label: 'Competitor Ads',
       value: comp ? fmtNum(comp.active_ads) : '--',
       delta: null,
       invert: false,
       sparkData: [],
       sparkKey: '',
-      color: '#F44444',
+      color: '#DC2626',
     },
   ]
 })
@@ -187,33 +178,18 @@ const quickAccessCards = computed(() => {
   <div>
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
-      <div class="flex items-center gap-6">
-        <div class="flex items-center gap-2">
-          <h1 class="text-xl font-semibold text-white">Projects</h1>
-          <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </div>
-        <!-- Tabs -->
-        <div class="flex gap-1 bg-surface-card rounded-lg p-1 border border-surface-border">
-          <button
-            v-for="tab in tabs"
-            :key="tab"
-            class="px-4 py-1.5 rounded-md text-xs font-medium transition-colors"
-            :class="activeTab === tab ? 'bg-fo-action text-white' : 'text-gray-400 hover:text-white'"
-            @click="activeTab = tab"
-          >{{ tab }}</button>
-        </div>
+      <div>
+        <h1 class="text-xl font-semibold text-gray-900">Overview</h1>
+        <p class="text-sm text-gray-400 mt-0.5">firstorion.com performance summary</p>
       </div>
       <!-- Period dropdown -->
       <div class="relative">
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-surface-card rounded-lg border border-surface-border text-sm text-gray-300 hover:text-white transition-colors"
+          class="flex items-center gap-2 px-4 py-2 bg-surface-card rounded-lg border border-surface-border text-sm text-gray-700 hover:text-gray-900 transition-colors"
           @click="periodOpen = !periodOpen"
         >
           {{ selectedPeriod.label }}
-          <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
           </svg>
         </button>
@@ -225,40 +201,9 @@ const quickAccessCards = computed(() => {
             v-for="opt in periodOptions"
             :key="opt.days"
             class="w-full text-left px-4 py-2 text-sm transition-colors"
-            :class="selectedPeriod.days === opt.days ? 'text-fo-action bg-fo-action/10' : 'text-gray-300 hover:bg-surface-hover hover:text-white'"
+            :class="selectedPeriod.days === opt.days ? 'text-fo-action bg-fo-action/10' : 'text-gray-700 hover:bg-surface-hover hover:text-gray-900'"
             @click="selectPeriod(opt)"
           >{{ opt.label }}</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Project Card -->
-    <div class="bg-surface-card rounded-xl border border-surface-border p-5 mb-6">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-4">
-          <!-- Favicon / logo area -->
-          <div class="w-10 h-10 rounded-lg bg-fo-action/15 flex items-center justify-center">
-            <span class="text-lg font-bold text-fo-action">FO</span>
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <h2 class="text-base font-semibold text-white">First Orion Website</h2>
-              <span class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-status-up/15 text-status-up">
-                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                  <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                </svg>
-                Active
-              </span>
-            </div>
-            <p class="text-sm text-gray-500 mt-0.5">firstorion.com</p>
-          </div>
-        </div>
-        <!-- Project links -->
-        <div class="flex items-center gap-6">
-          <div v-for="link in projectLinks" :key="link.label" class="text-center">
-            <p class="text-xs text-gray-500">{{ link.label }}</p>
-            <p class="text-sm font-medium text-gray-300">{{ link.count }}</p>
-          </div>
         </div>
       </div>
     </div>
@@ -266,10 +211,10 @@ const quickAccessCards = computed(() => {
     <!-- Loading -->
     <div v-if="store.loading" class="space-y-6">
       <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        <div v-for="i in 6" :key="i" class="h-32 bg-surface-card rounded-xl animate-pulse" />
+        <div v-for="i in 6" :key="i" class="h-32 bg-surface-card rounded-xl border border-surface-border animate-pulse" />
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div v-for="i in 4" :key="i" class="h-40 bg-surface-card rounded-xl animate-pulse" />
+        <div v-for="i in 4" :key="i" class="h-40 bg-surface-card rounded-xl border border-surface-border animate-pulse" />
       </div>
     </div>
 
@@ -279,46 +224,41 @@ const quickAccessCards = computed(() => {
         <div
           v-for="(card, idx) in metricCards"
           :key="idx"
-          class="bg-surface-card rounded-xl p-5 border border-surface-border"
+          class="bg-surface-card rounded-xl p-4 border border-surface-border overflow-hidden"
         >
-          <p class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">{{ card.label }}</p>
-          <div class="flex items-end justify-between">
-            <div>
-              <p class="text-2xl font-bold text-white">{{ card.value }}</p>
-              <p
-                v-if="card.delta"
-                class="text-xs mt-1"
-                :class="deltaClass(card.delta, card.invert)"
-              >
-                {{ deltaArrow(card.delta) }}
-                {{ Math.abs(card.delta.pct).toFixed(1) }}%
-              </p>
-              <p v-else class="text-xs mt-1 text-gray-500">current period</p>
-            </div>
-            <!-- Mini sparkline -->
-            <svg
-              v-if="card.sparkData?.length > 1"
-              class="w-20 h-7 flex-shrink-0"
-              viewBox="0 0 80 28"
-              preserveAspectRatio="none"
-            >
-              <polyline
-                :points="sparklinePoints(card.sparkData, card.sparkKey)"
-                fill="none"
-                :stroke="card.color"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-            <div v-else class="w-20 h-7 flex-shrink-0" />
-          </div>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">{{ card.label }}</p>
+          <p class="text-xl font-bold text-gray-900 truncate">{{ card.value }}</p>
+          <p
+            v-if="card.delta"
+            class="text-xs mt-0.5"
+            :class="deltaClass(card.delta, card.invert)"
+          >
+            {{ deltaArrow(card.delta) }}
+            {{ Math.abs(card.delta.pct).toFixed(1) }}%
+          </p>
+          <p v-else class="text-xs mt-0.5 text-gray-400">current period</p>
+          <!-- Sparkline below value -->
+          <svg
+            v-if="card.sparkData?.length > 1"
+            class="w-full h-6 mt-2"
+            viewBox="0 0 80 24"
+            preserveAspectRatio="none"
+          >
+            <polyline
+              :points="sparklinePoints(card.sparkData, card.sparkKey, 80, 24)"
+              fill="none"
+              :stroke="card.color"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
         </div>
       </div>
 
       <!-- Quick Access Grid -->
       <div class="mb-4">
-        <h3 class="text-sm font-semibold text-white mb-4">Dashboards</h3>
+        <h3 class="text-sm font-semibold text-gray-900 mb-4">Dashboards</h3>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <NuxtLink
@@ -335,15 +275,15 @@ const quickAccessCards = computed(() => {
               </svg>
             </div>
             <svg
-              class="w-4 h-4 text-gray-600 group-hover:text-gray-400 transition-colors"
+              class="w-4 h-4 text-gray-400 group-hover:text-gray-500 transition-colors"
               fill="none" stroke="currentColor" viewBox="0 0 24 24"
             >
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
             </svg>
           </div>
-          <h4 class="text-sm font-semibold text-white mb-1">{{ card.title }}</h4>
-          <p class="text-lg font-bold text-white mb-0.5">{{ card.stat }}</p>
-          <p class="text-xs text-gray-500">{{ card.sub }}</p>
+          <h4 class="text-sm font-semibold text-gray-900 mb-1">{{ card.title }}</h4>
+          <p class="text-lg font-bold text-gray-900 mb-0.5">{{ card.stat }}</p>
+          <p class="text-xs text-gray-400">{{ card.sub }}</p>
           <p class="text-xs text-fo-action mt-3 group-hover:underline">View Dashboard &rarr;</p>
         </NuxtLink>
       </div>

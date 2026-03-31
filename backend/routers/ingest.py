@@ -10,11 +10,12 @@ from database import get_db
 from models.db import (
     OrganicPerformance, PaidPerformance, SearchTerm,
     AIVisibility, AICitation, AICompetitor, CompetitorAd,
+    AdCreativePerformance,
 )
 from services.mock_gsc import generate_gsc_data
 from services.gsc import fetch_gsc_data
-from services.mock_ads import generate_paid_data, generate_search_terms_data
-from services.google_ads import fetch_paid_data, fetch_search_terms_data
+from services.mock_ads import generate_paid_data, generate_search_terms_data, generate_ad_creative_data
+from services.google_ads import fetch_paid_data, fetch_search_terms_data, fetch_ad_creative_data
 from services.mock_profound import (
     generate_ai_visibility, generate_ai_citations, generate_ai_competitors,
 )
@@ -24,6 +25,9 @@ from services.profound import (
 from services.mock_transparency import generate_competitor_ads
 from services.transparency import fetch_all_competitor_ads
 from services.serper import run_serper_sweep
+from services.methodology_scraper import (
+    refresh_methodology, get_pending_changes, dismiss_change, dismiss_all_changes,
+)
 
 router = APIRouter()
 
@@ -43,11 +47,13 @@ def ingest_gsc(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db
     today = date.today()
     existing = _dates_with_data(db, "organic_performance", days)
     inserted = 0
+    skipped = 0
     source = "mock" if app_settings.USE_MOCK_GSC else "gsc_api"
 
     for i in range(days):
         target = today - timedelta(days=i + 1)
         if target in existing:
+            skipped += 1
             continue
 
         if app_settings.USE_MOCK_GSC:
@@ -60,7 +66,7 @@ def ingest_gsc(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db
         inserted += len(rows)
 
     db.commit()
-    return {"pipeline": "gsc", "source": source, "days": days, "rows_inserted": inserted}
+    return {"pipeline": "gsc", "source": source, "days": days, "rows_inserted": inserted, "days_skipped": skipped}
 
 
 @router.post("/ads")
@@ -69,11 +75,14 @@ def ingest_ads(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db
     existing_paid = _dates_with_data(db, "paid_performance", days)
     existing_terms = _dates_with_data(db, "search_terms", days)
     inserted = 0
+    skipped = 0
     source = "mock" if app_settings.USE_MOCK_ADS else "google_ads_api"
 
     for i in range(days):
         target = today - timedelta(days=i + 1)
+        day_skipped = True
         if target not in existing_paid:
+            day_skipped = False
             if app_settings.USE_MOCK_ADS:
                 rows = generate_paid_data(target)
             else:
@@ -82,6 +91,7 @@ def ingest_ads(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db
                 db.add(PaidPerformance(**r))
             inserted += len(rows)
         if target not in existing_terms:
+            day_skipped = False
             if app_settings.USE_MOCK_ADS:
                 rows = generate_search_terms_data(target)
             else:
@@ -89,9 +99,11 @@ def ingest_ads(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db
             for r in rows:
                 db.add(SearchTerm(**r))
             inserted += len(rows)
+        if day_skipped:
+            skipped += 1
 
     db.commit()
-    return {"pipeline": "ads", "source": source, "days": days, "rows_inserted": inserted}
+    return {"pipeline": "ads", "source": source, "days": days, "rows_inserted": inserted, "days_skipped": skipped}
 
 
 @router.post("/profound")
@@ -99,11 +111,13 @@ def ingest_profound(days: int = Query(30, ge=1, le=365), db: Session = Depends(g
     today = date.today()
     existing_vis = _dates_with_data(db, "ai_visibility", days)
     inserted = 0
+    skipped = 0
     source = "mock" if app_settings.USE_MOCK_PROFOUND else "profound_api"
 
     for i in range(days):
         target = today - timedelta(days=i + 1)
         if target in existing_vis:
+            skipped += 1
             continue
 
         if app_settings.USE_MOCK_PROFOUND:
@@ -124,7 +138,33 @@ def ingest_profound(days: int = Query(30, ge=1, le=365), db: Session = Depends(g
         inserted += 1
 
     db.commit()
-    return {"pipeline": "profound", "source": source, "days_processed": inserted}
+    return {"pipeline": "profound", "source": source, "days_processed": inserted, "days_skipped": skipped}
+
+
+@router.post("/creatives")
+def ingest_creatives(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db)):
+    """Ingest ad creative performance data from Google Ads API."""
+    today = date.today()
+    existing = _dates_with_data(db, "ad_creative_performance", days)
+    inserted = 0
+    source = "mock" if app_settings.USE_MOCK_ADS else "google_ads_api"
+
+    for i in range(days):
+        target = today - timedelta(days=i + 1)
+        if target in existing:
+            continue
+
+        if app_settings.USE_MOCK_ADS:
+            rows = generate_ad_creative_data(target)
+        else:
+            rows = fetch_ad_creative_data(target)
+
+        for r in rows:
+            db.add(AdCreativePerformance(**r))
+        inserted += len(rows)
+
+    db.commit()
+    return {"pipeline": "creatives", "source": source, "days": days, "rows_inserted": inserted}
 
 
 @router.post("/transparency")
@@ -178,3 +218,32 @@ def ingest_serper_sweep(db: Session = Depends(get_db)):
     """
     result = run_serper_sweep(db)
     return {"pipeline": "serper_sweep", **result}
+
+
+@router.post("/methodology-refresh")
+def ingest_methodology_refresh():
+    """Fetch methodology source pages and check for content changes.
+
+    Scrapes Ahrefs, Google Ads docs, and Clearscope pages.
+    Compares content hashes against last fetch.
+    Flags changes for human review in pending_changes.
+    Run every 30 days or on-demand.
+    """
+    result = refresh_methodology()
+    return {"pipeline": "methodology_refresh", **result}
+
+
+@router.get("/methodology-changes")
+def get_methodology_changes():
+    """Return pending methodology changes awaiting review."""
+    return {"pending_changes": get_pending_changes()}
+
+
+@router.post("/methodology-dismiss")
+def dismiss_methodology_change(index: int = Query(-1)):
+    """Dismiss a pending change by index, or all if index=-1."""
+    if index == -1:
+        count = dismiss_all_changes()
+        return {"dismissed": count, "all": True}
+    success = dismiss_change(index)
+    return {"dismissed": 1 if success else 0, "index": index}
