@@ -29,25 +29,31 @@ const citationTimeline = ref<any[]>([])
 const topics = ref<any[]>([])
 const prompts = ref<any[]>([])
 const citedUrls = ref<any[]>([])
+const extraLoaded = ref(false)
 
-async function loadAll() {
-  await store.fetchAI()
-  const days = store.periodDays
-  const [ct, tp, pr, cu] = await Promise.all([
-    get('/dashboard/ai/citation-timeline', { days }),
-    get('/dashboard/ai/topics', { days }),
-    get('/dashboard/ai/prompts', { days }),
-    get('/dashboard/ai/cited-urls', { days }),
-  ])
-  citationTimeline.value = ct
-  topics.value = tp
-  prompts.value = pr
-  citedUrls.value = cu
+async function loadAll(force = false) {
+  await store.fetchAI(force)
+  if (!extraLoaded.value || force) {
+    const days = store.periodDays
+    const results = await Promise.allSettled([
+      get('/dashboard/ai/citation-timeline', { days }),
+      get('/dashboard/ai/topics', { days }),
+      get('/dashboard/ai/prompts', { days }),
+      get('/dashboard/ai/cited-urls', { days }),
+    ])
+    const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
+    if (val(results[0])) citationTimeline.value = val(results[0])
+    if (val(results[1])) topics.value = val(results[1])
+    if (val(results[2])) prompts.value = val(results[2])
+    if (val(results[3])) citedUrls.value = val(results[3])
+    extraLoaded.value = true
+  }
 }
 
 async function setPeriod(days: number) {
   store.setPeriod(days)
-  await loadAll()
+  extraLoaded.value = false
+  await loadAll(true)
 }
 
 onMounted(() => loadAll())
@@ -309,18 +315,6 @@ const citationsByPlatform = computed(() => {
         <h1 class="text-xl font-semibold text-gray-900">{{ tabTitles[activeTab] }}</h1>
       </div>
       <div class="flex items-center gap-3">
-        <!-- Filter buttons -->
-        <div class="flex gap-2">
-          <button class="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-card border border-surface-border text-gray-500 hover:text-gray-900 transition-colors">
-            Platform
-          </button>
-          <button class="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-card border border-surface-border text-gray-500 hover:text-gray-900 transition-colors">
-            All engines
-          </button>
-          <button class="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-card border border-surface-border text-gray-500 hover:text-gray-900 transition-colors">
-            + Add filter
-          </button>
-        </div>
         <!-- Period selector -->
         <div class="flex gap-0.5 bg-surface-card rounded-lg p-1 border border-surface-border">
           <button v-for="p in periods" :key="p.days" class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors" :class="store.periodDays === p.days ? 'bg-fo-action text-white' : 'text-gray-500 hover:text-gray-900'" @click="setPeriod(p.days)">{{ p.label }}</button>

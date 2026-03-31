@@ -12,6 +12,7 @@ export const useDashboardStore = defineStore('dashboard', {
     organicTopQueries: [] as any[],
     organicTopPages: [] as any[],
     organicDevices: [] as any[],
+    organicLoaded: false,
 
     // Paid (Google Ads API + Transparency Center)
     paidOverview: null as any,
@@ -21,6 +22,7 @@ export const useDashboardStore = defineStore('dashboard', {
     paidPages: [] as any[],
     paidTimeline: [] as any[],
     paidAdFormats: [] as any[],
+    paidLoaded: false,
 
     // AI
     aiOverview: null as any,
@@ -29,6 +31,7 @@ export const useDashboardStore = defineStore('dashboard', {
     aiTopCited: [] as any[],
     aiTimeline: [] as any[],
     aiSovComparison: null as any,
+    aiLoaded: false,
 
     // Overview
     overviewLoaded: false,
@@ -39,10 +42,12 @@ export const useDashboardStore = defineStore('dashboard', {
     compLongestRunning: [] as any[],
     compNewThisWeek: [] as any[],
     compFormats: [] as any[],
+    compLoaded: false,
 
     // Insights
     insights: null as any,
     insightsLoading: false,
+    insightsLoaded: false,
 
     // Creatives
     creativesOverview: null as any,
@@ -51,35 +56,50 @@ export const useDashboardStore = defineStore('dashboard', {
     creativesByCampaign: [] as any[],
     creativesTopHeadlines: [] as any[],
     creativesLoading: false,
+    creativesLoaded: false,
   }),
 
   actions: {
     setPeriod(days: number) {
-      this.periodDays = days
+      if (days !== this.periodDays) {
+        this.periodDays = days
+        // Period changed — invalidate all caches
+        this.organicLoaded = false
+        this.paidLoaded = false
+        this.aiLoaded = false
+        this.compLoaded = false
+        this.overviewLoaded = false
+        this.insightsLoaded = false
+        this.creativesLoaded = false
+      }
     },
 
-    async fetchOrganic(brand: string = 'non-branded') {
+    async fetchOrganic(brand: string = 'non-branded', force = false) {
+      if (this.organicLoaded && !force) return
       const { get } = useApi()
       const days = this.periodDays
       const brandParam = brand === 'all' ? undefined : brand
-      const [overview, timeline, topQueries, topPages, devices] = await Promise.all([
+      const results = await Promise.allSettled([
         get('/dashboard/organic/overview', { days, brand: brandParam }),
         get('/dashboard/organic/timeline', { days: Math.max(days, 90) }),
         get('/dashboard/organic/top-queries', { days, brand: brandParam }),
         get('/dashboard/organic/top-pages', { days }),
         get('/dashboard/organic/devices', { days }),
       ])
-      this.organicOverview = overview
-      this.organicTimeline = timeline
-      this.organicTopQueries = topQueries
-      this.organicTopPages = topPages
-      this.organicDevices = devices
+      const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
+      if (val(results[0])) this.organicOverview = val(results[0])
+      if (val(results[1])) this.organicTimeline = val(results[1])
+      if (val(results[2])) this.organicTopQueries = val(results[2])
+      if (val(results[3])) this.organicTopPages = val(results[3])
+      if (val(results[4])) this.organicDevices = val(results[4])
+      this.organicLoaded = true
     },
 
-    async fetchPaid() {
+    async fetchPaid(force = false) {
+      if (this.paidLoaded && !force) return
       const { get } = useApi()
       const days = this.periodDays
-      const [overview, campaigns, searchTerms, ads, pages, timeline, adFormats] = await Promise.all([
+      const results = await Promise.allSettled([
         get('/dashboard/paid/overview', { days }),
         get('/dashboard/paid/campaigns', { days }),
         get('/dashboard/paid/search-terms', { days }),
@@ -88,61 +108,68 @@ export const useDashboardStore = defineStore('dashboard', {
         get('/dashboard/paid/timeline', { days: Math.max(days, 90) }),
         get('/dashboard/paid/ad-formats'),
       ])
-      this.paidOverview = overview
-      this.paidCampaigns = campaigns
-      this.paidSearchTerms = searchTerms
-      this.paidAds = ads
-      this.paidPages = pages
-      this.paidTimeline = timeline
-      this.paidAdFormats = adFormats
+      const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
+      if (val(results[0])) this.paidOverview = val(results[0])
+      if (val(results[1])) this.paidCampaigns = val(results[1])
+      if (val(results[2])) this.paidSearchTerms = val(results[2])
+      if (val(results[3])) this.paidAds = val(results[3])
+      if (val(results[4])) this.paidPages = val(results[4])
+      if (val(results[5])) this.paidTimeline = val(results[5])
+      if (val(results[6])) this.paidAdFormats = val(results[6])
+      this.paidLoaded = true
     },
 
-    async fetchAI() {
+    async fetchAI(force = false) {
+      if (this.aiLoaded && !force) return
       const { get } = useApi()
       const days = this.periodDays
-      const [overview, platforms, competitors, topCited, timeline, sovComparison] =
-        await Promise.all([
-          get('/dashboard/ai/overview', { days }),
-          get('/dashboard/ai/platforms', { days }),
-          get('/dashboard/ai/competitors', { days }),
-          get('/dashboard/ai/top-cited', { days }),
-          get('/dashboard/ai/timeline', { days: 60 }),
-          get('/dashboard/ai/sov-comparison', { days }),
-        ])
-      this.aiOverview = overview
-      this.aiPlatforms = platforms
-      this.aiCompetitors = competitors
-      this.aiTopCited = topCited
-      this.aiTimeline = timeline
-      this.aiSovComparison = sovComparison
+      const results = await Promise.allSettled([
+        get('/dashboard/ai/overview', { days }),
+        get('/dashboard/ai/platforms', { days }),
+        get('/dashboard/ai/competitors', { days }),
+        get('/dashboard/ai/top-cited', { days }),
+        get('/dashboard/ai/timeline', { days: 60 }),
+        get('/dashboard/ai/sov-comparison', { days }),
+      ])
+      const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
+      if (val(results[0])) this.aiOverview = val(results[0])
+      if (val(results[1])) this.aiPlatforms = val(results[1])
+      if (val(results[2])) this.aiCompetitors = val(results[2])
+      if (val(results[3])) this.aiTopCited = val(results[3])
+      if (val(results[4])) this.aiTimeline = val(results[4])
+      if (val(results[5])) this.aiSovComparison = val(results[5])
+      this.aiLoaded = true
     },
 
-    async fetchCompetitors() {
+    async fetchCompetitors(force = false) {
+      if (this.compLoaded && !force) return
       const { get } = useApi()
-      const [overview, byDomain, longestRunning, newThisWeek, formats] =
-        await Promise.all([
-          get('/dashboard/competitors/overview'),
-          get('/dashboard/competitors/by-domain'),
-          get('/dashboard/competitors/longest-running'),
-          get('/dashboard/competitors/new-this-week'),
-          get('/dashboard/competitors/formats'),
-        ])
-      this.compOverview = overview
-      this.compByDomain = byDomain
-      this.compLongestRunning = longestRunning
-      this.compNewThisWeek = newThisWeek
-      this.compFormats = formats
+      const results = await Promise.allSettled([
+        get('/dashboard/competitors/overview'),
+        get('/dashboard/competitors/by-domain'),
+        get('/dashboard/competitors/longest-running'),
+        get('/dashboard/competitors/new-this-week'),
+        get('/dashboard/competitors/formats'),
+      ])
+      const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
+      if (val(results[0])) this.compOverview = val(results[0])
+      if (val(results[1])) this.compByDomain = val(results[1])
+      if (val(results[2])) this.compLongestRunning = val(results[2])
+      if (val(results[3])) this.compNewThisWeek = val(results[3])
+      if (val(results[4])) this.compFormats = val(results[4])
+      this.compLoaded = true
     },
 
-    async fetchOverview() {
+    async fetchOverview(force = false) {
+      if (this.overviewLoaded && !force) return
       this.loading = true
       this.error = null
       try {
-        await Promise.all([
-          this.fetchOrganic(),
-          this.fetchPaid(),
-          this.fetchAI(),
-          this.fetchCompetitors(),
+        await Promise.allSettled([
+          this.fetchOrganic('non-branded', force),
+          this.fetchPaid(force),
+          this.fetchAI(force),
+          this.fetchCompetitors(force),
         ])
         this.overviewLoaded = true
       } catch (e: any) {
@@ -152,11 +179,13 @@ export const useDashboardStore = defineStore('dashboard', {
       }
     },
 
-    async fetchInsights() {
+    async fetchInsights(force = false) {
+      if (this.insightsLoaded && !force) return
       const { get } = useApi()
       this.insightsLoading = true
       try {
         this.insights = await get('/dashboard/insights', { days: this.periodDays })
+        this.insightsLoaded = true
       } catch (e: any) {
         this.error = e.message
       } finally {
@@ -164,7 +193,8 @@ export const useDashboardStore = defineStore('dashboard', {
       }
     },
 
-    async fetchCreatives() {
+    async fetchCreatives(force = false) {
+      if (this.creativesLoaded && !force) return
       const { get } = useApi()
       const days = this.periodDays
       this.creativesLoading = true
@@ -181,6 +211,7 @@ export const useDashboardStore = defineStore('dashboard', {
         this.creativesTimeline = timeline
         this.creativesByCampaign = byCampaign
         this.creativesTopHeadlines = topHeadlines
+        this.creativesLoaded = true
       } catch (e: any) {
         this.error = e.message
       } finally {
@@ -188,15 +219,15 @@ export const useDashboardStore = defineStore('dashboard', {
       }
     },
 
-    async fetchAll() {
+    async fetchAll(force = false) {
       this.loading = true
       this.error = null
       try {
-        await Promise.all([
-          this.fetchOrganic(),
-          this.fetchPaid(),
-          this.fetchAI(),
-          this.fetchCompetitors(),
+        await Promise.allSettled([
+          this.fetchOrganic('non-branded', force),
+          this.fetchPaid(force),
+          this.fetchAI(force),
+          this.fetchCompetitors(force),
         ])
       } catch (e: any) {
         this.error = e.message

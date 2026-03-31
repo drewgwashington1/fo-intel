@@ -9,7 +9,7 @@ export function useApi() {
         if (v !== undefined && v !== null) url.searchParams.set(k, String(v))
       })
     }
-    const res = await fetch(url.toString())
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(15000) })
     if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`)
     return res.json()
   }
@@ -19,6 +19,7 @@ export function useApi() {
       method: 'POST',
       headers: body ? { 'Content-Type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30000),
     })
     if (!res.ok) throw new Error(`POST ${path} failed: ${res.status}`)
     return res.json()

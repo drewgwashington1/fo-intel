@@ -62,10 +62,9 @@ def _strip_domain(url: str) -> str:
     return parsed.path or "/"
 
 
-# ── Main endpoint ──────────────────────────────────────────────────
+# ── Computation function (called by summaries or as fallback) ────
 
-@router.get("/insights")
-def get_insights(days: int = Query(30), db: Session = Depends(get_db)):
+def _compute_insights(days: int, db: Session):
     cfg = _load_config()
     start = _period(days)
     prev_start, prev_end = _prev_period(days)
@@ -640,4 +639,8 @@ def get_insights(days: int = Query(30), db: Session = Depends(get_db)):
     summary["methodology_refreshed"] = cfg["_meta"]["last_refreshed"]
     summary["pending_changes"] = cfg["_meta"]["pending_changes"]
 
-    return {"summary": summary, "insights": insights}
+    result = {"summary": summary, "insights": insights}
+    # Cache the result
+    from services.summaries import set_cached
+    set_cached(db, f"insights:{days}", result)
+    return result

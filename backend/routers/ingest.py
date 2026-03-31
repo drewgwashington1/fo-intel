@@ -1,12 +1,12 @@
 """Ingest pipeline triggers — real + mock data for all sources."""
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from config import app_settings
-from database import get_db
+from database import get_db, get_db_session
 from models.db import (
     OrganicPerformance, PaidPerformance, SearchTerm,
     AIVisibility, AICitation, AICompetitor, CompetitorAd,
@@ -32,6 +32,25 @@ from services.methodology_scraper import (
 router = APIRouter()
 
 
+def _rebuild_scope_in_background(scope: str, pipeline_name: str, rows: int):
+    """Background task: update pipeline status and rebuild summaries."""
+    db = get_db_session()
+    try:
+        from services.summaries import update_pipeline_status, rebuild_summaries, rebuild_all_keyword_maps
+        update_pipeline_status(db, pipeline_name, rows)
+        if scope == "organic":
+            rebuild_all_keyword_maps(db)
+        rebuild_summaries(db, scope)
+        # Also rebuild insights since they cross-reference all data
+        from routers.insights import _compute_insights
+        try:
+            _compute_insights(30, db)
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
 def _dates_with_data(db: Session, table_name: str, days: int) -> set[date]:
     today = date.today()
     start = today - timedelta(days=days)
@@ -43,7 +62,7 @@ def _dates_with_data(db: Session, table_name: str, days: int) -> set[date]:
 
 
 @router.post("/gsc")
-def ingest_gsc(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db)):
+def ingest_gsc(days: int = Query(30, ge=1, le=365), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
     today = date.today()
     existing = _dates_with_data(db, "organic_performance", days)
     inserted = 0
@@ -66,11 +85,13 @@ def ingest_gsc(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db
         inserted += len(rows)
 
     db.commit()
+    if background_tasks and inserted > 0:
+        background_tasks.add_task(_rebuild_scope_in_background, "organic", "gsc", inserted)
     return {"pipeline": "gsc", "source": source, "days": days, "rows_inserted": inserted, "days_skipped": skipped}
 
 
 @router.post("/ads")
-def ingest_ads(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db)):
+def ingest_ads(days: int = Query(30, ge=1, le=365), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
     today = date.today()
     existing_paid = _dates_with_data(db, "paid_performance", days)
     existing_terms = _dates_with_data(db, "search_terms", days)
@@ -103,11 +124,13 @@ def ingest_ads(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db
             skipped += 1
 
     db.commit()
+    if background_tasks and inserted > 0:
+        background_tasks.add_task(_rebuild_scope_in_background, "paid", "ads", inserted)
     return {"pipeline": "ads", "source": source, "days": days, "rows_inserted": inserted, "days_skipped": skipped}
 
 
 @router.post("/profound")
-def ingest_profound(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db)):
+def ingest_profound(days: int = Query(30, ge=1, le=365), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
     today = date.today()
     existing_vis = _dates_with_data(db, "ai_visibility", days)
     inserted = 0
@@ -138,11 +161,13 @@ def ingest_profound(days: int = Query(30, ge=1, le=365), db: Session = Depends(g
         inserted += 1
 
     db.commit()
+    if background_tasks and inserted > 0:
+        background_tasks.add_task(_rebuild_scope_in_background, "ai", "profound", inserted)
     return {"pipeline": "profound", "source": source, "days_processed": inserted, "days_skipped": skipped}
 
 
 @router.post("/creatives")
-def ingest_creatives(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db)):
+def ingest_creatives(days: int = Query(30, ge=1, le=365), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
     """Ingest ad creative performance data from Google Ads API."""
     today = date.today()
     existing = _dates_with_data(db, "ad_creative_performance", days)
@@ -164,11 +189,13 @@ def ingest_creatives(days: int = Query(30, ge=1, le=365), db: Session = Depends(
         inserted += len(rows)
 
     db.commit()
+    if background_tasks and inserted > 0:
+        background_tasks.add_task(_rebuild_scope_in_background, "creatives", "creatives", inserted)
     return {"pipeline": "creatives", "source": source, "days": days, "rows_inserted": inserted}
 
 
 @router.post("/transparency")
-def ingest_transparency(db: Session = Depends(get_db)):
+def ingest_transparency(background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
     """Scrape competitor ads from Google Ads Transparency Center.
 
     Uses real scraper when USE_MOCK_TRANSPARENCY=false, otherwise mock data.
@@ -200,6 +227,8 @@ def ingest_transparency(db: Session = Depends(get_db)):
             inserted += 1
 
     db.commit()
+    if background_tasks and (inserted + updated) > 0:
+        background_tasks.add_task(_rebuild_scope_in_background, "competitors", "transparency", inserted + updated)
     return {
         "pipeline": "transparency",
         "source": source,
@@ -247,3 +276,52 @@ def dismiss_methodology_change(index: int = Query(-1)):
         return {"dismissed": count, "all": True}
     success = dismiss_change(index)
     return {"dismissed": 1 if success else 0, "index": index}
+
+
+@router.post("/refresh")
+def refresh_data(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Smart refresh: only re-ingest stale pipelines, then rebuild summaries.
+
+    - Pipeline data older than 14 days = re-ingest from source
+    - Summary data older than 24h = recompute from existing raw data
+    - Returns immediately, work happens in background
+    """
+    from services.summaries import get_stale_pipelines, rebuild_summaries as _rebuild, rebuild_all_keyword_maps
+
+    stale = get_stale_pipelines(db)
+
+    def _do_refresh():
+        bg_db = get_db_session()
+        try:
+            # Re-ingest stale pipelines
+            for pipeline in stale:
+                try:
+                    if pipeline == "gsc":
+                        ingest_gsc(days=30, db=bg_db)
+                    elif pipeline == "ads":
+                        ingest_ads(days=30, db=bg_db)
+                    elif pipeline == "creatives":
+                        ingest_creatives(days=30, db=bg_db)
+                    elif pipeline == "profound":
+                        ingest_profound(days=30, db=bg_db)
+                    elif pipeline == "transparency":
+                        ingest_transparency(db=bg_db)
+                except Exception as e:
+                    import logging
+                    logging.error(f"Refresh pipeline {pipeline} failed: {e}")
+
+            # Rebuild keyword maps and all summaries
+            rebuild_all_keyword_maps(bg_db)
+            _rebuild(bg_db, "all")
+
+            # Rebuild insights
+            from routers.insights import _compute_insights
+            try:
+                _compute_insights(30, bg_db)
+            except Exception:
+                pass
+        finally:
+            bg_db.close()
+
+    background_tasks.add_task(_do_refresh)
+    return {"status": "refreshing", "stale_pipelines": stale}

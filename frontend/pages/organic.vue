@@ -12,73 +12,135 @@ const periods = [
   { label: '1Y', days: 365 },
 ]
 
-const brandFilter = ref<'non-branded' | 'branded' | 'all'>('non-branded')
-const brandOptions = [
-  { key: 'non-branded', label: 'Non-branded' },
-  { key: 'branded', label: 'Branded' },
-  { key: 'all', label: 'All' },
-] as const
-
-const brandedTerms = ref<any[]>([])
-const nonBrandedTerms = ref<any[]>([])
-const newTerm = ref('')
-const newTermList = ref<'branded' | 'non-branded'>('non-branded')
+// ── Tags (dynamic keyword groups) ───────────────────────────────
+const activeTag = ref('non-branded')
+const tags = ref<{ list_name: string; term_count: number }[]>([])
+const tagTerms = ref<Record<string, any[]>>({})  // tag_name -> [{id, term}]
 const showTermsPanel = ref(false)
-const hasTrackedKeywords = computed(() => brandedTerms.value.length > 0 || nonBrandedTerms.value.length > 0)
+const newTerm = ref('')
+const selectedTag = ref('non-branded')
+const newTagName = ref('')
+const showNewTagInput = ref(false)
+const bulkMode = ref(false)
+const bulkTerms = ref('')
+const bulkAdding = ref(false)
+const bulkResult = ref<string | null>(null)
+
+const totalTrackedKeywords = computed(() => tags.value.reduce((s, t) => s + t.term_count, 0))
+const hasTrackedKeywords = computed(() => totalTrackedKeywords.value > 0)
 
 const positionDist = ref<any[]>([])
 const movements = ref<any>(null)
 const countries = ref<any[]>([])
 const activeMovementTab = ref('improved')
 
-async function loadTrackedTerms() {
-  const [b, nb] = await Promise.all([
-    get('/dashboard/keyword-lists/branded'),
-    get('/dashboard/keyword-lists/non-branded'),
-  ])
-  brandedTerms.value = b
-  nonBrandedTerms.value = nb
+const TAG_COLORS = [
+  { bg: 'bg-fo-action/10', text: 'text-fo-action', close: 'text-fo-action/50' },
+  { bg: 'bg-purple-100', text: 'text-purple-600', close: 'text-purple-400' },
+  { bg: 'bg-amber-100', text: 'text-amber-700', close: 'text-amber-400' },
+  { bg: 'bg-emerald-100', text: 'text-emerald-700', close: 'text-emerald-400' },
+  { bg: 'bg-pink-100', text: 'text-pink-600', close: 'text-pink-400' },
+  { bg: 'bg-gray-100', text: 'text-gray-600', close: 'text-gray-400' },
+]
+function tagColor(idx: number) { return TAG_COLORS[idx % TAG_COLORS.length] }
+
+async function loadTags() {
+  tags.value = await get('/dashboard/keyword-tags')
+  // Load terms for each tag
+  const termLoads = tags.value.map(t => get(`/dashboard/keyword-lists/${t.list_name}`))
+  const results = await Promise.allSettled(termLoads)
+  const newTerms: Record<string, any[]> = {}
+  tags.value.forEach((t, i) => {
+    newTerms[t.list_name] = results[i].status === 'fulfilled' ? (results[i] as any).value : []
+  })
+  tagTerms.value = newTerms
 }
 
 async function addTerm() {
   const term = newTerm.value.trim()
   if (!term) return
-  await post(`/dashboard/keyword-lists/${newTermList.value}?term=${encodeURIComponent(term)}`)
+  await post(`/dashboard/keyword-lists/${selectedTag.value}?term=${encodeURIComponent(term)}`)
   newTerm.value = ''
-  await loadTrackedTerms()
-  await loadAll()
+  await loadTags()
 }
 
-async function removeTerm(listName: string, term: string) {
-  await fetch(`${useRuntimeConfig().public.apiBase}/dashboard/keyword-lists/${listName}?term=${encodeURIComponent(term)}`, { method: 'DELETE' })
-  await loadTrackedTerms()
-  await loadAll()
+async function addBulkTerms() {
+  const lines = bulkTerms.value.split('\n').map(l => l.trim()).filter(Boolean)
+  if (!lines.length) return
+  bulkAdding.value = true
+  bulkResult.value = null
+  bulkTerms.value = ''
+  post(`/dashboard/keyword-lists/${selectedTag.value}/bulk`, lines)
+    .then((res: any) => {
+      bulkResult.value = `Added ${res.added_count} keywords${res.skipped_count ? `, ${res.skipped_count} skipped` : ''}`
+      loadTags()
+      setTimeout(() => { bulkResult.value = null }, 4000)
+    })
+    .catch(() => {
+      bulkResult.value = 'Failed to add keywords'
+      setTimeout(() => { bulkResult.value = null }, 4000)
+    })
+    .finally(() => { bulkAdding.value = false })
+  bulkMode.value = false
 }
 
-async function loadAll() {
-  await store.fetchOrganic(brandFilter.value)
-  const days = store.periodDays
-  const [pd, mv, co] = await Promise.all([
-    get('/dashboard/organic/position-distribution', { days }),
-    get('/dashboard/organic/movements', { days }),
-    get('/dashboard/organic/countries', { days }),
-  ])
-  positionDist.value = pd
-  movements.value = mv
-  countries.value = co
+async function removeTerm(tagName: string, term: string) {
+  await fetch(`${useRuntimeConfig().public.apiBase}/dashboard/keyword-lists/${tagName}?term=${encodeURIComponent(term)}`, { method: 'DELETE' })
+  await loadTags()
+}
+
+async function createTag() {
+  const name = newTagName.value.trim().toLowerCase().replace(/\s+/g, '-')
+  if (!name) return
+  showNewTagInput.value = false
+  newTagName.value = ''
+  // Create tag by adding a placeholder (the tag exists once it has terms)
+  // Just set it as selected so user can add terms to it
+  selectedTag.value = name
+  if (!tags.value.find(t => t.list_name === name)) {
+    tags.value.push({ list_name: name, term_count: 0 })
+    tagTerms.value[name] = []
+  }
+}
+
+async function deleteTag(tagName: string) {
+  await fetch(`${useRuntimeConfig().public.apiBase}/dashboard/keyword-tags/${tagName}`, { method: 'DELETE' })
+  if (activeTag.value === tagName) activeTag.value = 'non-branded'
+  if (selectedTag.value === tagName) selectedTag.value = 'non-branded'
+  await loadTags()
+}
+
+const extraLoaded = ref(false)
+
+async function loadAll(force = false) {
+  await store.fetchOrganic(activeTag.value, force)
+  if (!extraLoaded.value || force) {
+    const days = store.periodDays
+    const results = await Promise.allSettled([
+      get('/dashboard/organic/position-distribution', { days }),
+      get('/dashboard/organic/movements', { days }),
+      get('/dashboard/organic/countries', { days }),
+    ])
+    const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
+    if (val(results[0])) positionDist.value = val(results[0])
+    if (val(results[1])) movements.value = val(results[1])
+    if (val(results[2])) countries.value = val(results[2])
+    extraLoaded.value = true
+  }
 }
 
 async function setPeriod(days: number) {
   store.setPeriod(days)
+  extraLoaded.value = false
   await loadAll()
 }
 
-async function setBrand(b: typeof brandFilter.value) {
-  brandFilter.value = b
-  await loadAll()
+async function setTag(tag: string) {
+  activeTag.value = tag
+  await loadAll(true)
 }
 
-onMounted(() => { loadTrackedTerms().then(() => loadAll()) })
+onMounted(() => { loadTags().then(() => loadAll()) })
 
 const fmtNum = (n: number) => n?.toLocaleString() ?? '—'
 const fmtPct = (n: number) => n != null ? `${(n * 100).toFixed(1)}%` : '—'
@@ -149,12 +211,6 @@ const subTabs = [
   { key: 'competitors' as const, label: 'Organic competitors' },
 ]
 
-const filterButtons = [
-  { label: 'Monthly volume', icon: true },
-  { label: 'All locations', icon: true },
-  { label: 'Position', icon: true },
-  { label: 'Language', icon: true },
-]
 
 const timelineChart = computed(() => {
   const data = store.organicTimeline
@@ -351,21 +407,26 @@ const movementTabs = [
         </button>
       </div>
       <div class="flex items-center gap-3">
-        <!-- Brand filter -->
-        <div class="flex gap-0.5 bg-surface-card rounded-lg p-1 border border-surface-border">
+        <!-- Tag filter -->
+        <div class="flex gap-0.5 bg-surface-card rounded-lg p-1 border border-surface-border flex-wrap">
           <button
-            v-for="b in brandOptions" :key="b.key"
             class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-            :class="brandFilter === b.key ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900'"
-            @click="setBrand(b.key)"
-          >{{ b.label }}</button>
+            :class="activeTag === 'all' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900'"
+            @click="setTag('all')"
+          >All</button>
+          <button
+            v-for="t in tags" :key="t.list_name"
+            class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+            :class="activeTag === t.list_name ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900'"
+            @click="setTag(t.list_name)"
+          >{{ t.list_name }} ({{ t.term_count }})</button>
         </div>
         <button
           class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
           :class="showTermsPanel ? 'bg-gray-900 text-white' : 'bg-surface-card border border-surface-border text-gray-500 hover:text-gray-900'"
           @click="showTermsPanel = !showTermsPanel"
         >
-          Tracked Keywords ({{ brandedTerms.length + nonBrandedTerms.length }})
+          Tags ({{ tags.length }})
         </button>
         <button
           class="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-card border border-surface-border text-gray-500 hover:text-gray-900 transition-colors"
@@ -384,75 +445,117 @@ const movementTabs = [
       </div>
     </div>
 
-    <!-- Tracked keywords panel -->
+    <!-- Keyword Tags Panel -->
     <div v-if="showTermsPanel" class="bg-surface-card rounded-xl border border-surface-border p-4 mb-4">
-      <div class="mb-3">
-        <h3 class="text-sm font-semibold text-gray-900">Tracked Keywords</h3>
-        <p class="text-xs text-gray-400 mt-0.5">Only keywords matching these terms will appear in the organic dashboard. Add terms and categorize them as branded or non-branded.</p>
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">Keyword Tags</h3>
+          <p class="text-xs text-gray-400 mt-0.5">Group keywords by tag to filter organic data. Like Ahrefs keyword groups.</p>
+        </div>
+        <button
+          v-if="!showNewTagInput"
+          class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-fo-action text-white hover:bg-fo-blue transition-colors"
+          @click="showNewTagInput = true"
+        >
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+          New Tag
+        </button>
+        <div v-else class="flex items-center gap-2">
+          <input
+            v-model="newTagName"
+            type="text"
+            placeholder="Tag name (e.g. product, support)"
+            class="px-3 py-1.5 text-xs rounded-lg border border-surface-border bg-surface focus:outline-none focus:border-fo-action w-48"
+            @keydown.enter="createTag"
+          />
+          <button class="px-3 py-1.5 rounded-lg text-xs font-medium bg-fo-action text-white" @click="createTag">Create</button>
+          <button class="px-2 py-1.5 text-xs text-gray-400 hover:text-gray-700" @click="showNewTagInput = false">Cancel</button>
+        </div>
       </div>
-      <!-- Add term -->
-      <div class="flex items-center gap-2 mb-4">
+
+      <!-- Add keywords to tag -->
+      <div class="flex items-center gap-2 mb-2">
         <input
+          v-if="!bulkMode"
           v-model="newTerm"
           type="text"
-          placeholder="Add a keyword or phrase to track"
+          placeholder="Add a keyword or phrase"
           class="flex-1 px-3 py-2 text-sm rounded-lg border border-surface-border bg-surface focus:outline-none focus:border-fo-action"
           @keydown.enter="addTerm"
         />
-        <div class="flex gap-0.5 bg-surface rounded-lg p-0.5 border border-surface-border">
-          <button
-            class="px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors"
-            :class="newTermList === 'non-branded' ? 'bg-fo-action text-white' : 'text-gray-500'"
-            @click="newTermList = 'non-branded'"
-          >Non-branded</button>
-          <button
-            class="px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors"
-            :class="newTermList === 'branded' ? 'bg-fo-action text-white' : 'text-gray-500'"
-            @click="newTermList = 'branded'"
-          >Branded</button>
-        </div>
+        <select
+          v-model="selectedTag"
+          class="px-3 py-2 text-xs rounded-lg border border-surface-border bg-surface focus:outline-none focus:border-fo-action"
+        >
+          <option v-for="t in tags" :key="t.list_name" :value="t.list_name">{{ t.list_name }}</option>
+        </select>
         <button
+          v-if="!bulkMode"
           class="px-4 py-2 rounded-lg text-xs font-medium bg-fo-action text-white hover:bg-fo-blue transition-colors"
           @click="addTerm"
         >Add</button>
+        <button
+          class="px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+          :class="bulkMode ? 'bg-gray-900 text-white' : 'bg-surface border border-surface-border text-gray-500 hover:text-gray-900'"
+          @click="bulkMode = !bulkMode"
+        >{{ bulkMode ? 'Single' : 'Bulk' }}</button>
       </div>
-      <!-- Non-branded list -->
-      <div class="mb-3">
-        <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-2">Non-branded ({{ nonBrandedTerms.length }})</p>
-        <div class="flex flex-wrap gap-2">
-          <span
-            v-for="t in nonBrandedTerms"
-            :key="t.id"
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-fo-action/10 text-sm text-fo-action"
+
+      <!-- Bulk add -->
+      <div v-if="bulkMode" class="mb-4">
+        <textarea
+          v-model="bulkTerms"
+          rows="5"
+          placeholder="Paste keywords here, one per line"
+          class="w-full px-3 py-2 text-sm rounded-lg border border-surface-border bg-surface focus:outline-none focus:border-fo-action resize-y font-mono"
+        />
+        <div class="flex items-center justify-between mt-2">
+          <p class="text-xs text-gray-400">{{ bulkTerms.split('\n').filter(l => l.trim()).length }} keywords</p>
+          <button
+            class="px-4 py-2 rounded-lg text-xs font-medium bg-fo-action text-white hover:bg-fo-blue transition-colors disabled:opacity-50"
+            :disabled="bulkAdding || !bulkTerms.trim()"
+            @click="addBulkTerms"
           >
-            {{ t.term }}
-            <button class="text-fo-action/50 hover:text-status-down transition-colors" @click="removeTerm('non-branded', t.term)">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </span>
-          <span v-if="!nonBrandedTerms.length" class="text-xs text-gray-400">No non-branded terms tracked yet.</span>
+            <span v-if="bulkAdding">Adding...</span>
+            <span v-else>Add All</span>
+          </button>
         </div>
       </div>
-      <!-- Branded list -->
-      <div>
-        <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-2">Branded ({{ brandedTerms.length }})</p>
-        <div class="flex flex-wrap gap-2">
-          <span
-            v-for="t in brandedTerms"
-            :key="t.id"
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-100 text-sm text-gray-600"
-          >
-            {{ t.term }}
-            <button class="text-gray-400 hover:text-status-down transition-colors" @click="removeTerm('branded', t.term)">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </span>
-          <span v-if="!brandedTerms.length" class="text-xs text-gray-400">No branded terms tracked yet.</span>
+
+      <!-- Bulk result toast -->
+      <div v-if="bulkResult" class="mb-3 px-3 py-2 rounded-lg text-xs font-medium bg-fo-action/10 text-fo-action">
+        {{ bulkResult }}
+      </div>
+
+      <!-- Tag groups -->
+      <div class="space-y-4 mt-4">
+        <div v-for="(tag, idx) in tags" :key="tag.list_name">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-[10px] uppercase tracking-wider text-gray-400">{{ tag.list_name }} ({{ tagTerms[tag.list_name]?.length || 0 }})</p>
+            <button
+              v-if="tag.list_name !== 'branded' && tag.list_name !== 'non-branded'"
+              class="text-[10px] text-gray-400 hover:text-status-down transition-colors"
+              @click="deleteTag(tag.list_name)"
+            >Delete tag</button>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <span
+              v-for="t in tagTerms[tag.list_name]"
+              :key="t.id"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm"
+              :class="[tagColor(idx).bg, tagColor(idx).text]"
+            >
+              {{ t.term }}
+              <button :class="[tagColor(idx).close, 'hover:text-status-down transition-colors']" @click="removeTerm(tag.list_name, t.term)">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </span>
+            <span v-if="!tagTerms[tag.list_name]?.length" class="text-xs text-gray-400">No keywords in this tag yet.</span>
+          </div>
         </div>
+        <div v-if="!tags.length" class="text-xs text-gray-400">No tags created. Click "New Tag" to get started.</div>
       </div>
     </div>
 
@@ -487,28 +590,6 @@ const movementTabs = [
           />
         </button>
       </div>
-    </div>
-
-    <!-- Filter bar -->
-    <div class="flex items-center gap-0 py-3 mt-0 mb-4">
-      <div class="flex items-center gap-0 bg-surface-card rounded-lg border border-surface-border overflow-hidden">
-        <button
-          v-for="(f, i) in filterButtons" :key="f.label"
-          class="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-gray-500 hover:text-gray-900 transition-colors"
-          :class="{ 'border-r border-surface-border': i < filterButtons.length - 1 }"
-        >
-          {{ f.label }}
-          <svg v-if="f.icon" class="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-      </div>
-      <button class="flex items-center gap-1.5 px-4 py-2 ml-2 text-xs font-medium text-gray-400 hover:text-gray-700 transition-colors">
-        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        Add filter
-      </button>
     </div>
 
     <!-- Loading -->

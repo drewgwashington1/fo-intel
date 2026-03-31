@@ -2,6 +2,7 @@ from sqlalchemy import (
     Column, Integer, BigInteger, String, Float, Date, Boolean, DateTime, ARRAY,
     Text, Index,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from database import Base
 
@@ -253,3 +254,47 @@ class SerperCreditLog(Base):
     keywords_queried = Column(Integer, default=0)
     notes = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class TrackedCompetitor(Base):
+    """Competitor domains to track across all pipelines."""
+    __tablename__ = "tracked_competitors"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    domain = Column(String, nullable=False, unique=True)
+    display_name = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class KeywordQueryMap(Base):
+    """Pre-computed mapping of keyword lists to matching organic queries."""
+    __tablename__ = "keyword_query_map"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    keyword_list_name = Column(String, nullable=False)
+    query = Column(String, nullable=False)
+    matched_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_kqm_list_name", "keyword_list_name"),
+        Index("ix_kqm_list_query", "keyword_list_name", "query", unique=True),
+    )
+
+
+class SummaryCache(Base):
+    """Pre-computed dashboard endpoint responses."""
+    __tablename__ = "summary_cache"
+
+    cache_key = Column(String, primary_key=True)
+    response_json = Column(JSONB, nullable=False)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now())
+    stale_after = Column(DateTime(timezone=True), nullable=False)
+
+
+class PipelineStatus(Base):
+    """Track when each data pipeline last ran."""
+    __tablename__ = "pipeline_status"
+
+    pipeline_name = Column(String, primary_key=True)
+    last_run_at = Column(DateTime(timezone=True), server_default=func.now())
+    rows_processed = Column(Integer, default=0)
