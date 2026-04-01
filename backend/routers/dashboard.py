@@ -1,7 +1,7 @@
 """Dashboard API endpoints — all reads come from summary_cache."""
 from datetime import date, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -12,10 +12,10 @@ import io
 from database import get_db, get_db_session
 from models.db import KeywordList, TrackedCompetitor
 from services.summaries import (
-    get_cached, rebuild_keyword_map, rebuild_summaries, invalidate_scope,
+    get_cached, rebuild_keyword_map, rebuild_category_map, rebuild_summaries, invalidate_scope,
     build_organic_overview, build_organic_timeline, build_organic_top_queries,
     build_organic_position_dist, build_organic_movements, build_organic_top_pages,
-    build_organic_devices, build_organic_countries,
+    build_organic_devices, build_organic_countries, build_organic_competitors,
     build_paid_overview, build_paid_campaigns, build_paid_search_terms,
     build_paid_timeline, build_paid_is_loss, build_paid_pages, build_paid_ads, build_paid_ad_formats,
     build_ai_overview, build_ai_platforms, build_ai_competitors, build_ai_sov_comparison,
@@ -37,6 +37,17 @@ def _cached_or_build(db, cache_key, builder, *args):
     return builder(db, *args)
 
 
+# ── Pipeline Status ───────────────────────────────────────────────
+
+@router.get("/pipeline-status")
+def pipeline_status(db=Depends(get_db)):
+    """Return last run time for all pipelines."""
+    rows = db.execute(text(
+        "SELECT pipeline_name, last_run_at, rows_processed FROM pipeline_status ORDER BY pipeline_name"
+    )).mappings().all()
+    return [dict(r) for r in rows]
+
+
 # ── Keyword List Management (mutations — no caching) ─────────────
 
 @router.get("/keyword-tags")
@@ -55,7 +66,7 @@ def delete_keyword_tag(tag_name: str, background_tasks: BackgroundTasks = None, 
     db.execute(text("DELETE FROM keyword_query_map WHERE keyword_list_name = :name"), {"name": tag_name})
     db.commit()
     if background_tasks:
-        background_tasks.add_task(lambda: None)  # summaries still valid, just fewer tags
+        background_tasks.add_task(_rebuild_branded_map)
     return {"status": "deleted", "tag": tag_name}
 
 
@@ -106,38 +117,78 @@ def remove_tracked_competitor(domain: str = Query(...), db=Depends(get_db)):
 @router.get("/keyword-lists/{list_name}")
 def get_keyword_list(list_name: str, db=Depends(get_db)):
     rows = db.execute(text(
-        "SELECT id, term, created_at FROM keyword_lists WHERE list_name = :name ORDER BY term"
+        "SELECT id, term, category, created_at FROM keyword_lists WHERE list_name = :name ORDER BY term"
     ), {"name": list_name}).mappings().all()
     return [dict(r) for r in rows]
 
 
+@router.get("/keywords/all")
+def get_all_keywords(db=Depends(get_db)):
+    """Return every keyword with its tag and category."""
+    rows = db.execute(text(
+        "SELECT id, list_name, term, category, created_at FROM keyword_lists ORDER BY term"
+    )).mappings().all()
+    return [dict(r) for r in rows]
+
+
 def _rebuild_organic_after_keyword_change(list_name: str):
-    """Background task: rebuild keyword map + organic summaries."""
+    """Background task: rebuild keyword map for tag + both categories + organic summaries."""
     db = get_db_session()
     try:
         rebuild_keyword_map(db, list_name)
+        rebuild_category_map(db, "branded")
+        rebuild_category_map(db, "non-branded")
+        rebuild_summaries(db, "organic")
+    finally:
+        db.close()
+
+
+def _rebuild_branded_map():
+    """Background task: rebuild the branded/non-branded category maps + organic summaries."""
+    db = get_db_session()
+    try:
+        rebuild_category_map(db, "branded")
+        rebuild_category_map(db, "non-branded")
         rebuild_summaries(db, "organic")
     finally:
         db.close()
 
 
 @router.post("/keyword-lists/{list_name}")
-def add_keyword_term(list_name: str, term: str = Query(...), background_tasks: BackgroundTasks = None, db=Depends(get_db)):
+def add_keyword_term(
+    list_name: str,
+    term: str = Query(...),
+    category: str = Query("non-branded"),
+    background_tasks: BackgroundTasks = None,
+    db=Depends(get_db),
+):
     term = term.strip().lower()
+    category = category.strip().lower()
+    if category not in ("branded", "non-branded"):
+        category = "non-branded"
     existing = db.execute(text(
         "SELECT id FROM keyword_lists WHERE list_name = :name AND term = :term"
     ), {"name": list_name, "term": term}).first()
     if existing:
         return {"status": "exists", "term": term}
-    db.add(KeywordList(list_name=list_name, term=term))
+    db.add(KeywordList(list_name=list_name, term=term, category=category))
     db.commit()
     if background_tasks:
         background_tasks.add_task(_rebuild_organic_after_keyword_change, list_name)
-    return {"status": "added", "term": term, "refresh": "computing"}
+    return {"status": "added", "term": term, "category": category, "refresh": "computing"}
 
 
 @router.post("/keyword-lists/{list_name}/bulk")
-def add_keyword_terms_bulk(list_name: str, terms: list[str], background_tasks: BackgroundTasks = None, db=Depends(get_db)):
+def add_keyword_terms_bulk(
+    list_name: str,
+    terms: list[str] = Body(...),
+    category: str = Query("non-branded"),
+    background_tasks: BackgroundTasks = None,
+    db=Depends(get_db),
+):
+    category = category.strip().lower()
+    if category not in ("branded", "non-branded"):
+        category = "non-branded"
     added = []
     skipped = []
     for raw in terms:
@@ -150,12 +201,32 @@ def add_keyword_terms_bulk(list_name: str, terms: list[str], background_tasks: B
         if existing:
             skipped.append(term)
         else:
-            db.add(KeywordList(list_name=list_name, term=term))
+            db.add(KeywordList(list_name=list_name, term=term, category=category))
             added.append(term)
     db.commit()
     if background_tasks and added:
         background_tasks.add_task(_rebuild_organic_after_keyword_change, list_name)
     return {"added": added, "skipped": skipped, "added_count": len(added), "skipped_count": len(skipped)}
+
+
+@router.patch("/keywords/{keyword_id}/category")
+def update_keyword_category(
+    keyword_id: int,
+    category: str = Query(...),
+    background_tasks: BackgroundTasks = None,
+    db=Depends(get_db),
+):
+    """Change a keyword's branded/non-branded category."""
+    category = category.strip().lower()
+    if category not in ("branded", "non-branded"):
+        return {"error": "category must be 'branded' or 'non-branded'"}
+    db.execute(text(
+        "UPDATE keyword_lists SET category = :cat WHERE id = :id"
+    ), {"cat": category, "id": keyword_id})
+    db.commit()
+    if background_tasks:
+        background_tasks.add_task(_rebuild_branded_map)
+    return {"status": "updated", "id": keyword_id, "category": category}
 
 
 @router.delete("/keyword-lists/{list_name}")
@@ -194,8 +265,8 @@ def _csv_response(rows: list[dict], filename: str):
 # ── Organic Performance ─────────────────────────────────────────
 
 @router.get("/organic/overview")
-def organic_overview(days: int = Query(30), brand: str = Query(None), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"organic_overview:{days}:{brand or 'all'}", build_organic_overview, days, brand)
+def organic_overview(days: int = Query(30), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
+    return _cached_or_build(db, f"organic_overview:{days}:{brand or 'all'}:{tag or 'all'}", build_organic_overview, days, brand, tag)
 
 
 @router.get("/organic/timeline")
@@ -204,33 +275,46 @@ def organic_timeline(days: int = Query(90), db: Session = Depends(get_db)):
 
 
 @router.get("/organic/position-distribution")
-def organic_position_dist(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"organic_position_dist:{days}", build_organic_position_dist, days)
+def organic_position_dist(days: int = Query(30), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
+    return _cached_or_build(db, f"organic_position_dist:{days}:{brand or 'all'}:{tag or 'all'}", build_organic_position_dist, days, brand, tag)
 
 
 @router.get("/organic/movements")
-def organic_movements(days: int = Query(7), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"organic_movements:{days}", build_organic_movements, days)
+def organic_movements(days: int = Query(7), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
+    return _cached_or_build(db, f"organic_movements:{days}:{brand or 'all'}:{tag or 'all'}", build_organic_movements, days, brand, tag)
 
 
 @router.get("/organic/top-queries")
-def organic_top_queries(days: int = Query(30), limit: int = Query(25), brand: str = Query(None), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"organic_top_queries:{days}:{brand or 'all'}:{limit}", build_organic_top_queries, days, brand, limit)
+def organic_top_queries(days: int = Query(30), limit: int = Query(25), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
+    return _cached_or_build(db, f"organic_top_queries:{days}:{brand or 'all'}:{limit}:{tag or 'all'}", build_organic_top_queries, days, brand, limit, tag)
 
 
 @router.get("/organic/top-pages")
-def organic_top_pages(days: int = Query(30), limit: int = Query(20), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"organic_top_pages:{days}:{limit}", build_organic_top_pages, days, limit)
+def organic_top_pages(days: int = Query(30), limit: int = Query(20), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
+    return _cached_or_build(db, f"organic_top_pages:{days}:{limit}:{brand or 'all'}:{tag or 'all'}", build_organic_top_pages, days, limit, brand, tag)
 
 
 @router.get("/organic/devices")
-def organic_devices(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"organic_devices:{days}", build_organic_devices, days)
+def organic_devices(days: int = Query(30), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
+    return _cached_or_build(db, f"organic_devices:{days}:{brand or 'all'}:{tag or 'all'}", build_organic_devices, days, brand, tag)
 
 
 @router.get("/organic/countries")
-def organic_countries(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"organic_countries:{days}", build_organic_countries, days)
+def organic_countries(days: int = Query(30), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
+    return _cached_or_build(db, f"organic_countries:{days}:{brand or 'all'}:{tag or 'all'}", build_organic_countries, days, brand, tag)
+
+
+@router.get("/organic/competitors")
+def organic_competitors_data(days: int = Query(90), db: Session = Depends(get_db)):
+    return _cached_or_build(db, f"organic_competitors:{days}", build_organic_competitors, days)
+
+
+@router.get("/organic/competitors/backfill")
+def organic_competitors_backfill(db: Session = Depends(get_db)):
+    """One-time backfill: extract organic results from existing serp_cache."""
+    from services.serper import backfill_organic_from_cache
+    result = backfill_organic_from_cache(db)
+    return result
 
 
 @router.get("/organic/export")

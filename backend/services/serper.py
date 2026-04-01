@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
 
 from config import app_settings
-from models.db import SerpCache, PaidKeywordObservation, SerperCreditLog
+from models.db import SerpCache, PaidKeywordObservation, OrganicSerpResult, SerperCreditLog
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,55 @@ def _extract_paid_ads(keyword: str, serp_data: dict, today: date) -> list[dict]:
     return observations
 
 
+def _extract_organic_results(keyword: str, serp_data: dict, today: date) -> list[dict]:
+    """Extract organic ranking results from Serper response."""
+    results = []
+    organic = serp_data.get("organic", [])
+
+    for item in organic:
+        link = item.get("link", "")
+        domain = ""
+        if link:
+            parsed = urlparse(link)
+            domain = parsed.netloc.replace("www.", "")
+
+        if domain:
+            results.append({
+                "observed_date": today,
+                "keyword": keyword,
+                "domain": domain,
+                "position": item.get("position", 0),
+                "title": item.get("title", ""),
+                "url": link,
+            })
+
+    return results
+
+
+def backfill_organic_from_cache(db: Session) -> dict:
+    """Extract organic results from existing serp_cache entries.
+    Call once to populate organic_serp_results from already-cached SERP data.
+    """
+    from sqlalchemy import text
+    rows = db.execute(text(
+        "SELECT keyword, queried_date, result_json FROM serp_cache WHERE result_json IS NOT NULL"
+    )).fetchall()
+
+    total = 0
+    for keyword, queried_date, result_json in rows:
+        try:
+            serp_data = json.loads(result_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        organic = _extract_organic_results(keyword, serp_data, queried_date)
+        for org in organic:
+            db.add(OrganicSerpResult(**org))
+            total += 1
+
+    db.commit()
+    return {"backfilled": total}
+
+
 def run_serper_sweep(db: Session) -> dict:
     """Run a keyword sweep using Serper API.
 
@@ -177,6 +226,11 @@ def run_serper_sweep(db: Session) -> dict:
             total_ads_found += 1
 
         observations.extend(ads)
+
+        # Extract organic results
+        organic = _extract_organic_results(keyword, serp_data, today)
+        for org in organic:
+            db.add(OrganicSerpResult(**org))
 
     # Log credit usage
     db.add(SerperCreditLog(

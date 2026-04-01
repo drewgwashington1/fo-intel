@@ -74,17 +74,19 @@ export const useDashboardStore = defineStore('dashboard', {
       }
     },
 
-    async fetchOrganic(brand: string = 'non-branded', force = false) {
+    async fetchOrganic(brand: string = 'non-branded', tag: string = 'all', force = false) {
       if (this.organicLoaded && !force) return
       const { get } = useApi()
       const days = this.periodDays
       const brandParam = brand === 'all' ? undefined : brand
+      const tagParam = tag === 'all' ? undefined : tag
+      const params = { days, brand: brandParam, tag: tagParam }
       const results = await Promise.allSettled([
-        get('/dashboard/organic/overview', { days, brand: brandParam }),
+        get('/dashboard/organic/overview', params),
         get('/dashboard/organic/timeline', { days: Math.max(days, 90) }),
-        get('/dashboard/organic/top-queries', { days, brand: brandParam }),
-        get('/dashboard/organic/top-pages', { days }),
-        get('/dashboard/organic/devices', { days }),
+        get('/dashboard/organic/top-queries', { ...params, limit: 25 }),
+        get('/dashboard/organic/top-pages', params),
+        get('/dashboard/organic/devices', params),
       ])
       const val = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? r.value : null
       if (val(results[0])) this.organicOverview = val(results[0])

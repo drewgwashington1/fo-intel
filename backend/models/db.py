@@ -153,16 +153,21 @@ class CompetitorAd(Base):
 
 
 class KeywordList(Base):
-    """User-defined keyword lists for filtering (branded, non-branded, custom)."""
+    """User-defined keyword lists for filtering.
+    list_name = tag (custom grouping like 'product', 'support')
+    category  = branded / non-branded (binary classification, separate from tag)
+    """
     __tablename__ = "keyword_lists"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    list_name = Column(String, nullable=False)  # e.g. "branded"
+    list_name = Column(String, nullable=False)  # tag name, e.g. "product"
     term = Column(String, nullable=False)
+    category = Column(String, nullable=False, server_default="non-branded")  # "branded" or "non-branded"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
         Index("ix_keyword_lists_name", "list_name"),
+        Index("ix_keyword_lists_category", "category"),
     )
 
 
@@ -241,6 +246,26 @@ class PaidKeywordObservation(Base):
         Index("ix_paid_kw_obs_keyword", "keyword"),
         Index("ix_paid_kw_obs_domain", "advertiser_domain"),
         Index("ix_paid_kw_obs_date", "observed_date"),
+    )
+
+
+class OrganicSerpResult(Base):
+    """Organic SERP results extracted from Serper — who ranks for our keywords."""
+    __tablename__ = "organic_serp_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    observed_date = Column(Date, nullable=False)
+    keyword = Column(String, nullable=False)
+    domain = Column(String, nullable=False)
+    position = Column(Integer, nullable=False)
+    title = Column(String)
+    url = Column(String)
+    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_org_serp_keyword", "keyword"),
+        Index("ix_org_serp_domain", "domain"),
+        Index("ix_org_serp_date", "observed_date"),
     )
 
 

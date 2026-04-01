@@ -45,5 +45,45 @@ export function useApi() {
     return res.json()
   }
 
-  return { get, post }
+  async function del<T = any>(path: string, params?: Record<string, any>): Promise<T> {
+    const url = new URL(`${base}${path}`)
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) url.searchParams.set(k, String(v))
+      })
+    }
+    const res = await fetch(url.toString(), {
+      method: 'DELETE',
+      headers: _authHeaders(),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (res.status === 401 && import.meta.client) {
+      localStorage.removeItem('fo_intel_token')
+      window.location.href = '/login'
+    }
+    if (!res.ok) throw new Error(`DELETE ${path} failed: ${res.status}`)
+    return res.json()
+  }
+
+  async function patch<T = any>(path: string, params?: Record<string, any>): Promise<T> {
+    const url = new URL(`${base}${path}`)
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) url.searchParams.set(k, String(v))
+      })
+    }
+    const res = await fetch(url.toString(), {
+      method: 'PATCH',
+      headers: _authHeaders(),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (res.status === 401 && import.meta.client) {
+      localStorage.removeItem('fo_intel_token')
+      window.location.href = '/login'
+    }
+    if (!res.ok) throw new Error(`PATCH ${path} failed: ${res.status}`)
+    return res.json()
+  }
+
+  return { get, post, del, patch }
 }

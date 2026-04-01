@@ -56,12 +56,12 @@ _EXCLUDED_URL_PATTERNS = [
 
 def _branded_exclusion(col: str = "query") -> str:
     """SQL fragment to exclude branded keywords.
-    Combines: hardcoded org name variations + user-defined branded keyword list.
+    Combines: hardcoded org name variations + user-defined keywords with category='branded'.
     """
     org_clauses = " AND ".join([f"LOWER({col}) NOT LIKE '%{t}%'" for t in _ORG_TERMS])
     return (
         f"AND {org_clauses} "
-        f"AND {col} NOT IN (SELECT kqm.query FROM keyword_query_map kqm WHERE kqm.keyword_list_name = 'branded')"
+        f"AND LOWER({col}) NOT IN (SELECT LOWER(kl.term) FROM keyword_lists kl WHERE kl.category = 'branded')"
     )
 
 

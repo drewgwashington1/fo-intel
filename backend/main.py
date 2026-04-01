@@ -31,6 +31,17 @@ def startup():
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created/verified")
+        # Migrate: add category column if missing (existing installs)
+        from sqlalchemy import text as _t, inspect as _inspect
+        insp = _inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("keyword_lists")]
+        if "category" not in cols:
+            with engine.begin() as conn:
+                conn.execute(_t("ALTER TABLE keyword_lists ADD COLUMN category VARCHAR NOT NULL DEFAULT 'non-branded'"))
+                conn.execute(_t("CREATE INDEX IF NOT EXISTS ix_keyword_lists_category ON keyword_lists (category)"))
+                # Migrate old data: rows with list_name='branded' → category='branded'
+                conn.execute(_t("UPDATE keyword_lists SET category = 'branded' WHERE list_name = 'branded'"))
+            logger.info("Migrated keyword_lists: added category column")
     except Exception as e:
         logger.error(f"Database startup failed: {e}")
         return
@@ -49,6 +60,11 @@ def startup():
                 rebuild_summaries(db, "all")
             else:
                 logger.info(f"Summary cache has {count} entries")
+                # Always rebuild keyword maps (category-based maps may be missing)
+                rebuild_all_keyword_maps(db)
+                # Invalidate organic cache so stale data doesn't persist across deploys
+                invalidate_scope(db, "organic")
+                rebuild_summaries(db, "organic")
 
             # Always rebuild insights on startup (logic may have changed between deploys)
             logger.info("Rebuilding insights cache...")

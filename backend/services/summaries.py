@@ -71,7 +71,7 @@ def invalidate_scope(db: Session, scope: str):
 # ── Keyword Query Map ────────────────────────────────────────────
 
 def rebuild_keyword_map(db: Session, list_name: str):
-    """Re-compute keyword_query_map for a specific keyword list.
+    """Re-compute keyword_query_map for a specific keyword list (tag name).
     Runs ILIKE once against distinct queries, not per-request.
     """
     logger.info(f"Rebuilding keyword_query_map for list: {list_name}")
@@ -108,39 +108,114 @@ def rebuild_keyword_map(db: Session, list_name: str):
     return count
 
 
+def rebuild_category_map(db: Session, category: str):
+    """Re-compute keyword_query_map for a category (branded / non-branded).
+    Aggregates all terms with that category across all tags.
+    """
+    logger.info(f"Rebuilding keyword_query_map for category: {category}")
+
+    terms = db.execute(text(
+        "SELECT term FROM keyword_lists WHERE category = :cat"
+    ), {"cat": category}).fetchall()
+
+    # Use category name as the keyword_list_name in the map
+    db.execute(text(
+        "DELETE FROM keyword_query_map WHERE keyword_list_name = :cat"
+    ), {"cat": category})
+
+    if not terms:
+        db.commit()
+        return 0
+
+    term_patterns = [f"%{t[0]}%" for t in terms]
+    db.execute(text("""
+        INSERT INTO keyword_query_map (keyword_list_name, query, matched_at)
+        SELECT :cat, q.query, now()
+        FROM (SELECT DISTINCT query FROM organic_performance) q
+        WHERE q.query ILIKE ANY(:patterns)
+        ON CONFLICT (keyword_list_name, query) DO NOTHING
+    """), {"cat": category, "patterns": term_patterns})
+    db.commit()
+
+    count = db.execute(text(
+        "SELECT COUNT(*) FROM keyword_query_map WHERE keyword_list_name = :cat"
+    ), {"cat": category}).scalar()
+    logger.info(f"keyword_query_map for category '{category}': {count} queries matched")
+    return count
+
+
 def rebuild_all_keyword_maps(db: Session):
-    """Rebuild keyword_query_map for all keyword lists."""
+    """Rebuild keyword_query_map for all tag names AND both categories."""
     lists = db.execute(text(
         "SELECT DISTINCT list_name FROM keyword_lists"
     )).fetchall()
     for row in lists:
         rebuild_keyword_map(db, row[0])
+    # Also rebuild category-level maps
+    rebuild_category_map(db, "branded")
+    rebuild_category_map(db, "non-branded")
 
 
 # ── Keyword-filtered query helper ────────────────────────────────
 
-def _brand_filter(brand: str) -> str:
-    """Return SQL WHERE clause using pre-computed keyword_query_map.
-    Fast indexed lookup instead of ILIKE.
+def _brand_filter_empty_check(db: Session, brand: str) -> str:
+    """Returns SQL WHERE fragment to filter organic queries by keyword category.
+    Uses keyword_query_map (fast) if available, otherwise falls back to
+    a direct subquery against keyword_lists (always current, never stale).
+    Returns 'AND 1=0' if no keywords exist for this category.
     """
     if brand is None or brand == "all":
         return ""
+    count = db.execute(text(
+        "SELECT COUNT(*) FROM keyword_lists WHERE category = :cat"
+    ), {"cat": brand}).scalar()
+    if not count:
+        return "AND 1=0"
+    # Use keyword_query_map if it has entries for this category
+    map_count = db.execute(text(
+        "SELECT COUNT(*) FROM keyword_query_map WHERE keyword_list_name = :name"
+    ), {"name": brand}).scalar()
+    if map_count:
+        return (
+            f"AND query IN (SELECT query FROM keyword_query_map "
+            f"WHERE keyword_list_name = '{brand}')"
+        )
+    # Map not built yet — fall back to direct ILIKE against keyword_lists
+    # This is slower but always works immediately after adding keywords
     return (
-        f"AND query IN (SELECT query FROM keyword_query_map "
-        f"WHERE keyword_list_name = '{brand}')"
+        f"AND EXISTS (SELECT 1 FROM keyword_lists kl "
+        f"WHERE kl.category = '{brand}' AND query ILIKE '%' || kl.term || '%')"
     )
 
 
-def _brand_filter_empty_check(db: Session, brand: str) -> str:
-    """Returns the filter, but returns 'AND 1=0' if no keywords are tracked."""
-    if brand is None or brand == "all":
+def _tag_filter(db: Session, tag: str) -> str:
+    """Return SQL WHERE fragment to filter by keyword tag (list_name).
+    Uses keyword_query_map when available, falls back to direct ILIKE.
+    """
+    if not tag or tag == "all":
         return ""
     count = db.execute(text(
-        "SELECT COUNT(*) FROM keyword_query_map WHERE keyword_list_name = :name"
-    ), {"name": brand}).scalar()
+        "SELECT COUNT(*) FROM keyword_lists WHERE list_name = :name"
+    ), {"name": tag}).scalar()
     if not count:
         return "AND 1=0"
-    return _brand_filter(brand)
+    map_count = db.execute(text(
+        "SELECT COUNT(*) FROM keyword_query_map WHERE keyword_list_name = :name"
+    ), {"name": tag}).scalar()
+    if map_count:
+        return (
+            f"AND query IN (SELECT query FROM keyword_query_map "
+            f"WHERE keyword_list_name = '{tag}')"
+        )
+    return (
+        f"AND EXISTS (SELECT 1 FROM keyword_lists kl "
+        f"WHERE kl.list_name = '{tag}' AND query ILIKE '%' || kl.term || '%')"
+    )
+
+
+def _combined_filter(db: Session, brand: str, tag: str) -> str:
+    """Combine brand (category) and tag filters."""
+    return _brand_filter_empty_check(db, brand) + " " + _tag_filter(db, tag)
 
 
 # ── Summary Builders ─────────────────────────────────────────────
@@ -159,11 +234,11 @@ def _prev_period(days: int):
     return start, end
 
 
-def build_organic_overview(db: Session, days: int, brand: str):
-    key = f"organic_overview:{days}:{brand or 'all'}"
+def build_organic_overview(db: Session, days: int, brand: str, tag: str = None):
+    key = f"organic_overview:{days}:{brand or 'all'}:{tag or 'all'}"
     start = _period(days)
     prev_start, prev_end = _prev_period(days)
-    bf = _brand_filter_empty_check(db, brand)
+    bf = _combined_filter(db, brand, tag)
 
     current = db.execute(text(f"""
         SELECT
@@ -221,11 +296,11 @@ def build_organic_timeline(db: Session, days: int):
     return result
 
 
-def build_organic_top_queries(db: Session, days: int, brand: str, limit: int = 25):
-    key = f"organic_top_queries:{days}:{brand or 'all'}:{limit}"
+def build_organic_top_queries(db: Session, days: int, brand: str, limit: int = 25, tag: str = None):
+    key = f"organic_top_queries:{days}:{brand or 'all'}:{limit}:{tag or 'all'}"
     start = _period(days)
     prev_start, prev_end = _prev_period(days)
-    bf = _brand_filter_empty_check(db, brand)
+    bf = _combined_filter(db, brand, tag)
 
     rows = db.execute(text(f"""
         WITH current_q AS (
@@ -255,17 +330,18 @@ def build_organic_top_queries(db: Session, days: int, brand: str, limit: int = 2
     return result
 
 
-def build_organic_position_dist(db: Session, days: int):
-    key = f"organic_position_dist:{days}"
+def build_organic_position_dist(db: Session, days: int, brand: str = None, tag: str = None):
+    key = f"organic_position_dist:{days}:{brand or 'all'}:{tag or 'all'}"
     start = _period(days)
-    rows = db.execute(text("""
+    bf = _combined_filter(db, brand, tag)
+    rows = db.execute(text(f"""
         SELECT data_date,
                COUNT(*) FILTER (WHERE position <= 3) AS pos_1_3,
                COUNT(*) FILTER (WHERE position > 3 AND position <= 10) AS pos_4_10,
                COUNT(*) FILTER (WHERE position > 10 AND position <= 20) AS pos_11_20,
                COUNT(*) FILTER (WHERE position > 20 AND position <= 50) AS pos_21_50,
                COUNT(*) FILTER (WHERE position > 50) AS pos_51_plus
-        FROM organic_performance WHERE data_date >= :start
+        FROM organic_performance WHERE data_date >= :start {bf}
         GROUP BY data_date ORDER BY data_date
     """), {"start": start}).mappings().all()
     result = [dict(r) for r in rows]
@@ -273,25 +349,27 @@ def build_organic_position_dist(db: Session, days: int):
     return result
 
 
-def build_organic_movements(db: Session, days: int):
-    key = f"organic_movements:{days}"
+def build_organic_movements(db: Session, days: int, brand: str = None, tag: str = None):
+    key = f"organic_movements:{days}:{brand or 'all'}:{tag or 'all'}"
     start = _period(days)
     prev_start, prev_end = _prev_period(days)
+    bf = _combined_filter(db, brand, tag)
 
-    rows = db.execute(text("""
+    rows = db.execute(text(f"""
         WITH current_period AS (
-            SELECT query, page,
+            SELECT query,
+                   (ARRAY_AGG(page ORDER BY clicks DESC))[1] AS page,
                    ROUND((SUM(position * impressions) / NULLIF(SUM(impressions), 0))::numeric, 0) AS avg_position,
                    SUM(clicks) AS clicks
-            FROM organic_performance WHERE data_date >= :start
-            GROUP BY query, page
+            FROM organic_performance WHERE data_date >= :start {bf}
+            GROUP BY query
         ),
         prev_period AS (
-            SELECT query, page,
+            SELECT query,
                    ROUND((SUM(position * impressions) / NULLIF(SUM(impressions), 0))::numeric, 0) AS avg_position,
                    SUM(clicks) AS clicks
-            FROM organic_performance WHERE data_date >= :prev_start AND data_date < :prev_end
-            GROUP BY query, page
+            FROM organic_performance WHERE data_date >= :prev_start AND data_date < :prev_end {bf}
+            GROUP BY query
         ),
         combined AS (
             SELECT c.query, c.page, c.avg_position AS current_pos, p.avg_position AS prev_pos,
@@ -302,10 +380,10 @@ def build_organic_movements(db: Session, days: int):
                      WHEN c.avg_position > p.avg_position THEN 'declined'
                      ELSE 'unchanged'
                    END AS movement
-            FROM current_period c LEFT JOIN prev_period p ON c.query = p.query AND c.page = p.page
+            FROM current_period c LEFT JOIN prev_period p ON c.query = p.query
             UNION ALL
-            SELECT p.query, p.page, NULL, p.avg_position, p.clicks, 'lost'
-            FROM prev_period p LEFT JOIN current_period c ON p.query = c.query AND p.page = c.page
+            SELECT p.query, NULL, NULL, p.avg_position, p.clicks, 'lost'
+            FROM prev_period p LEFT JOIN current_period c ON p.query = c.query
             WHERE c.query IS NULL
         )
         SELECT movement, query, page, current_pos, prev_pos, current_clicks
@@ -315,8 +393,14 @@ def build_organic_movements(db: Session, days: int):
 
     details = {"new": [], "lost": [], "improved": [], "declined": []}
     counts = {"new": 0, "lost": 0, "improved": 0, "declined": 0}
+    seen = set()
     for r in rows:
+        q = r["query"]
         m = r["movement"]
+        dedup_key = f"{m}:{q}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
         counts[m] = counts.get(m, 0) + 1
         details.setdefault(m, []).append(dict(r))
 
@@ -325,17 +409,18 @@ def build_organic_movements(db: Session, days: int):
     return result
 
 
-def build_organic_top_pages(db: Session, days: int, limit: int = 20):
-    key = f"organic_top_pages:{days}:{limit}"
+def build_organic_top_pages(db: Session, days: int, limit: int = 20, brand: str = None, tag: str = None):
+    key = f"organic_top_pages:{days}:{limit}:{brand or 'all'}:{tag or 'all'}"
     start = _period(days)
-    rows = db.execute(text("""
+    bf = _combined_filter(db, brand, tag)
+    rows = db.execute(text(f"""
         SELECT page, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
                CASE WHEN SUM(impressions) > 0
                     THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1) ELSE 0 END AS avg_position,
                COUNT(DISTINCT query) AS keywords,
                CASE WHEN SUM(impressions) > 0
                     THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4) ELSE 0 END AS ctr
-        FROM organic_performance WHERE data_date >= :start
+        FROM organic_performance WHERE data_date >= :start {bf}
         GROUP BY page ORDER BY clicks DESC LIMIT :lim
     """), {"start": start, "lim": limit}).mappings().all()
     result = [dict(r) for r in rows]
@@ -343,14 +428,15 @@ def build_organic_top_pages(db: Session, days: int, limit: int = 20):
     return result
 
 
-def build_organic_devices(db: Session, days: int):
-    key = f"organic_devices:{days}"
+def build_organic_devices(db: Session, days: int, brand: str = None, tag: str = None):
+    key = f"organic_devices:{days}:{brand or 'all'}:{tag or 'all'}"
     start = _period(days)
-    rows = db.execute(text("""
+    bf = _combined_filter(db, brand, tag)
+    rows = db.execute(text(f"""
         SELECT device, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
                CASE WHEN SUM(impressions) > 0
                     THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4) ELSE 0 END AS ctr
-        FROM organic_performance WHERE data_date >= :start
+        FROM organic_performance WHERE data_date >= :start {bf}
         GROUP BY device ORDER BY clicks DESC
     """), {"start": start}).mappings().all()
     result = [dict(r) for r in rows]
@@ -358,19 +444,126 @@ def build_organic_devices(db: Session, days: int):
     return result
 
 
-def build_organic_countries(db: Session, days: int):
-    key = f"organic_countries:{days}"
+def build_organic_countries(db: Session, days: int, brand: str = None, tag: str = None):
+    key = f"organic_countries:{days}:{brand or 'all'}:{tag or 'all'}"
     start = _period(days)
-    rows = db.execute(text("""
+    bf = _combined_filter(db, brand, tag)
+    rows = db.execute(text(f"""
         SELECT country, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
                CASE WHEN SUM(impressions) > 0
                     THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4) ELSE 0 END AS ctr,
                CASE WHEN SUM(impressions) > 0
                     THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1) ELSE 0 END AS avg_position
-        FROM organic_performance WHERE data_date >= :start
+        FROM organic_performance WHERE data_date >= :start {bf}
         GROUP BY country ORDER BY clicks DESC
     """), {"start": start}).mappings().all()
     result = [dict(r) for r in rows]
+    set_cached(db, key, result)
+    return result
+
+
+# ── Organic Competitors (from SERP data) ────────────────────────
+
+def build_organic_competitors(db: Session, days: int = 90):
+    """Build competitor overlap analysis from organic_serp_results.
+    Shows which domains compete for the same keywords we rank for.
+    """
+    key = f"organic_competitors:{days}"
+
+    # Check if organic_serp_results table has data
+    try:
+        has_data = db.execute(text(
+            "SELECT 1 FROM organic_serp_results LIMIT 1"
+        )).first()
+    except Exception:
+        return []
+
+    if not has_data:
+        return []
+
+    start = _period(days)
+
+    # Get our keyword count for overlap %
+    our_keywords = db.execute(text("""
+        SELECT COUNT(DISTINCT query) FROM organic_performance WHERE data_date >= :start
+    """), {"start": start}).scalar() or 1
+
+    # Competitor domains ranked by keyword overlap with our queries
+    # Only show tracked competitors
+    tracked = db.execute(text(
+        "SELECT domain FROM tracked_competitors"
+    )).fetchall()
+    tracked_domains = [r[0] for r in tracked]
+
+    if not tracked_domains:
+        set_cached(db, key, [])
+        return []
+
+    rows = db.execute(text("""
+        WITH our_queries AS (
+            SELECT DISTINCT query FROM organic_performance WHERE data_date >= :start
+        ),
+        competitor_rankings AS (
+            SELECT osr.domain,
+                   osr.keyword,
+                   MIN(osr.position) AS best_position
+            FROM organic_serp_results osr
+            JOIN our_queries oq ON LOWER(osr.keyword) = LOWER(oq.query)
+            WHERE osr.observed_date >= :start
+              AND osr.domain = ANY(:domains)
+            GROUP BY osr.domain, osr.keyword
+        )
+        SELECT domain,
+               COUNT(DISTINCT keyword) AS common_keywords,
+               ROUND(AVG(best_position)::numeric, 1) AS avg_position,
+               COUNT(DISTINCT keyword) FILTER (WHERE best_position <= 3) AS top3,
+               COUNT(DISTINCT keyword) FILTER (WHERE best_position <= 10) AS top10
+        FROM competitor_rankings
+        GROUP BY domain
+        ORDER BY common_keywords DESC
+    """), {"start": start, "domains": tracked_domains}).mappings().all()
+
+    found = {r["domain"] for r in rows}
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["overlap_pct"] = round(d["common_keywords"] / our_keywords * 100, 1)
+        result.append(d)
+
+    # Include tracked competitors with no SERP data yet (show as 0)
+    for domain in tracked_domains:
+        if domain not in found:
+            result.append({
+                "domain": domain,
+                "common_keywords": 0,
+                "avg_position": 0,
+                "top3": 0,
+                "top10": 0,
+                "overlap_pct": 0,
+            })
+
+    # Add firstorion.com's own stats from GSC data
+    fo_stats = db.execute(text("""
+        SELECT COUNT(DISTINCT query) AS total_keywords,
+               CASE WHEN SUM(impressions) > 0
+                    THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1)
+                    ELSE 0 END AS avg_position,
+               COUNT(DISTINCT query) FILTER (WHERE position <= 3) AS top3,
+               COUNT(DISTINCT query) FILTER (WHERE position <= 10) AS top10
+        FROM organic_performance WHERE data_date >= :start
+    """), {"start": start}).mappings().first()
+
+    if fo_stats:
+        result.insert(0, {
+            "domain": "firstorion.com",
+            "common_keywords": int(fo_stats["total_keywords"]),
+            "avg_position": float(fo_stats["avg_position"]),
+            "top3": int(fo_stats["top3"]),
+            "top10": int(fo_stats["top10"]),
+            "overlap_pct": 100.0,
+            "is_self": True,
+        })
+
     set_cached(db, key, result)
     return result
 
