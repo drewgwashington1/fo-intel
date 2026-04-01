@@ -75,10 +75,15 @@ function deltaArrow(d: { pct: number }) {
   return d.pct > 0 ? '\u2191' : d.pct < 0 ? '\u2193' : '\u2192'
 }
 
-function truncateUrl(url: string, max = 60) {
+function truncateUrl(url: string, max = 60): string {
   if (!url) return '—'
-  const clean = url.replace(/^https?:\/\/(www\.)?/, '')
-  return clean.length > max ? clean.slice(0, max) + '...' : clean
+  try {
+    const u = new URL(url.startsWith('http') ? url : `https://${url}`)
+    const path = u.pathname === '/' ? '/' : u.pathname
+    return path.length > max ? path.slice(0, max) + '...' : path
+  } catch {
+    return url.length > max ? url.slice(0, max) + '...' : url
+  }
 }
 
 /* ── Platform colors ── */
@@ -350,7 +355,7 @@ const citationsByPlatform = computed(() => {
       <!-- KPI Cards -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">AI Visibility Score</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Composite score (0-100) measuring how often FO appears in AI-generated answers">AI Visibility Score</p>
           <div class="flex items-baseline gap-1.5">
             <p class="text-2xl font-bold text-gray-900">{{ Number(store.aiOverview.avg_visibility).toFixed(1) }}</p>
             <p class="text-sm text-gray-400">/100</p>
@@ -361,7 +366,7 @@ const citationsByPlatform = computed(() => {
           </p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Avg Share of Voice</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Average percentage of AI responses where FO is mentioned vs competitors">Avg Share of Voice</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtPct(store.aiOverview.avg_sov) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.aiOverview.avg_sov, store.aiOverview.prev_sov))">
             {{ deltaArrow(delta(store.aiOverview.avg_sov, store.aiOverview.prev_sov)) }}
@@ -369,7 +374,7 @@ const citationsByPlatform = computed(() => {
           </p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Citations</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Number of times FO pages were directly or indirectly cited in AI answers">Total Citations</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.aiOverview.total_citation_records) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.aiOverview.total_citations, store.aiOverview.prev_citations))">
             {{ deltaArrow(delta(store.aiOverview.total_citations, store.aiOverview.prev_citations)) }}
@@ -377,7 +382,7 @@ const citationsByPlatform = computed(() => {
           </p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Platforms Tracked</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Number of AI engines being monitored (ChatGPT, Perplexity, Gemini, etc.)">Platforms Tracked</p>
           <p class="text-2xl font-bold text-gray-900">{{ store.aiPlatforms?.length ?? 0 }}</p>
           <p class="text-xs mt-1 text-gray-400">AI engines monitored</p>
         </div>
@@ -412,7 +417,7 @@ const citationsByPlatform = computed(() => {
 
           <!-- SOV + Citations -->
           <div class="flex items-center justify-between text-xs text-gray-400">
-            <span>SOV: <span class="text-gray-700 font-medium">{{ fmtPct(p.avg_sov) }}</span></span>
+            <span title="Share of voice — percentage of AI responses mentioning FO on this platform">SOV: <span class="text-gray-700 font-medium">{{ fmtPct(p.avg_sov) }}</span></span>
             <span>{{ fmtNum(p.citations) }} cites</span>
           </div>
         </div>
@@ -494,17 +499,17 @@ const citationsByPlatform = computed(() => {
       <!-- Citation KPI Cards -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Citations</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total number of times FO content was cited across all AI platforms">Total Citations</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.aiOverview.total_citation_records) }}</p>
           <p class="text-xs mt-1 text-gray-400">Across all AI engines</p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Top Cited URL</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="FO page most frequently referenced in AI-generated answers">Top Cited URL</p>
           <p class="text-sm font-semibold text-fo-action mt-1 truncate" :title="store.aiTopCited?.[0]?.cited_url">{{ topCitedUrl }}</p>
           <p class="text-xs mt-1 text-gray-400">{{ store.aiTopCited?.[0]?.citation_count ?? 0 }} citations</p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Citation Trend</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Direction of citation count — comparing second half of period to first half">Citation Trend</p>
           <div class="flex items-baseline gap-2">
             <p class="text-2xl font-bold" :class="citationTrend.direction === 'up' ? 'text-status-up' : citationTrend.direction === 'down' ? 'text-status-down' : 'text-gray-400'">
               {{ citationTrend.direction === 'up' ? '\u2191' : citationTrend.direction === 'down' ? '\u2193' : '\u2192' }}
@@ -516,7 +521,7 @@ const citationsByPlatform = computed(() => {
           <p class="text-xs mt-1 text-gray-400">vs first half of period</p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Cited Pages</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Number of unique FO URLs that have been cited by AI engines">Cited Pages</p>
           <p class="text-2xl font-bold text-gray-900">{{ store.aiTopCited?.length ?? 0 }}</p>
           <p class="text-xs mt-1 text-gray-400">Unique URLs cited</p>
         </div>
@@ -623,22 +628,22 @@ const citationsByPlatform = computed(() => {
       <!-- Competitor KPI Cards -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">FO Share of Voice</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="First Orion's share of AI-generated mentions relative to competitors">FO Share of Voice</p>
           <p class="text-2xl font-bold text-fo-action">{{ fmtPct(store.aiOverview.avg_sov) }}</p>
           <p class="text-xs mt-1 text-gray-400">Across all AI engines</p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Competitors Tracked</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Number of competitor domains being monitored in AI engine responses">Competitors Tracked</p>
           <p class="text-2xl font-bold text-gray-900">{{ store.aiCompetitors?.length ?? 0 }}</p>
           <p class="text-xs mt-1 text-gray-400">Active in AI engines</p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Top Competitor</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Competitor with the highest share of voice across AI engines">Top Competitor</p>
           <p class="text-sm font-semibold text-gray-900 mt-1">{{ sortedCompetitors[0]?.competitor_domain ?? '—' }}</p>
           <p class="text-xs mt-1 text-gray-400">SOV: {{ sortedCompetitors[0] ? fmtPct(sortedCompetitors[0].avg_sov) : '—' }}</p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">SOV Gap (Top Comp)</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Difference in share of voice between FO and the top competitor (positive = FO ahead)">SOV Gap (Top Comp)</p>
           <div v-if="sortedCompetitors[0]">
             <p class="text-2xl font-bold" :class="Number(sortedCompetitors[0].avg_sov) > Number(store.aiOverview.avg_sov) ? 'text-status-down' : 'text-status-up'">
               {{ Math.abs((Number(sortedCompetitors[0].avg_sov) - Number(store.aiOverview.avg_sov)) * 100).toFixed(1) }}pts

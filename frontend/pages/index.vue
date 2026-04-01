@@ -71,6 +71,7 @@ const metricCards = computed(() => {
   return [
     {
       label: 'Organic Clicks',
+      tooltip: 'Total clicks from organic (non-paid) Google search results',
       value: org ? fmtNum(org.total_clicks) : '--',
       delta: org ? delta(org.total_clicks, org.prev_clicks) : null,
       invert: false,
@@ -80,6 +81,7 @@ const metricCards = computed(() => {
     },
     {
       label: 'Avg Position',
+      tooltip: 'Weighted average position in Google search results (lower is better)',
       value: org ? fmtPos(org.avg_position) : '--',
       delta: org ? delta(org.avg_position, org.prev_position) : null,
       invert: true,
@@ -89,6 +91,7 @@ const metricCards = computed(() => {
     },
     {
       label: 'Paid Clicks',
+      tooltip: 'Total clicks from paid Google Ads campaigns',
       value: paid ? fmtNum(paid.total_clicks) : '--',
       delta: paid ? delta(paid.total_clicks, paid.prev_clicks) : null,
       invert: false,
@@ -98,6 +101,7 @@ const metricCards = computed(() => {
     },
     {
       label: 'Paid Impressions',
+      tooltip: 'Number of times paid ads were shown in search results',
       value: paid ? fmtNum(paid.total_impressions) : '--',
       delta: paid ? delta(paid.total_impressions, paid.prev_impressions) : null,
       invert: false,
@@ -107,6 +111,7 @@ const metricCards = computed(() => {
     },
     {
       label: 'AI Visibility',
+      tooltip: 'Average visibility score across AI engines like ChatGPT, Perplexity, and Gemini (0-100%)',
       value: ai ? fmtPct(ai.avg_visibility) : '--',
       delta: ai ? delta(ai.avg_visibility, ai.prev_visibility) : null,
       invert: false,
@@ -116,6 +121,7 @@ const metricCards = computed(() => {
     },
     {
       label: 'Competitor Ads',
+      tooltip: 'Number of active ads from tracked competitors in Google Ads Transparency Center',
       value: comp ? fmtNum(comp.active_ads) : '--',
       delta: null,
       invert: false,
@@ -136,6 +142,7 @@ const quickAccessCards = computed(() => {
   return [
     {
       title: 'Organic Performance',
+      tooltip: 'Google Search Console data — clicks, impressions, CTR, and rankings for organic search',
       icon: 'M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z',
       stat: org ? `${fmtNum(org.total_clicks)} clicks` : '--',
       sub: org ? `${fmtNum(org.total_impressions)} impressions` : '',
@@ -145,6 +152,7 @@ const quickAccessCards = computed(() => {
     },
     {
       title: 'Paid Performance',
+      tooltip: 'Google Ads data — spend efficiency, impression share, CPC, and search term performance',
       icon: 'M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
       stat: paid ? `${fmtNum(paid.total_clicks)} clicks` : '--',
       sub: paid ? `${fmtNum(paid.total_impressions)} impressions` : '',
@@ -154,6 +162,7 @@ const quickAccessCards = computed(() => {
     },
     {
       title: 'AI Visibility',
+      tooltip: 'Profound API data — how often FO appears in AI-generated answers across ChatGPT, Perplexity, Gemini, and more',
       icon: 'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
       stat: ai ? `${fmtPct(ai.avg_visibility)} avg` : '--',
       sub: ai ? `${ai.total_citations ?? 0} citations` : '',
@@ -163,6 +172,7 @@ const quickAccessCards = computed(() => {
     },
     {
       title: 'Competitor Ads',
+      tooltip: 'Google Ads Transparency Center data — competitor ad creatives, formats, and run durations',
       icon: 'M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5m.75-9l3-3 2.148 2.148A12.061 12.061 0 0116.5 7.605',
       stat: comp ? `${fmtNum(comp.active_ads)} active` : '--',
       sub: comp ? `${comp.domains_tracked ?? 5} competitors` : '',
@@ -226,7 +236,7 @@ const quickAccessCards = computed(() => {
           :key="idx"
           class="bg-surface-card rounded-xl p-4 border border-surface-border overflow-hidden"
         >
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">{{ card.label }}</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" :title="card.tooltip">{{ card.label }}</p>
           <p class="text-xl font-bold text-gray-900 truncate">{{ card.value }}</p>
           <p
             v-if="card.delta"
@@ -281,7 +291,7 @@ const quickAccessCards = computed(() => {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
             </svg>
           </div>
-          <h4 class="text-sm font-semibold text-gray-900 mb-1">{{ card.title }}</h4>
+          <h4 class="text-sm font-semibold text-gray-900 mb-1" :title="card.tooltip">{{ card.title }}</h4>
           <p class="text-lg font-bold text-gray-900 mb-0.5">{{ card.stat }}</p>
           <p class="text-xs text-gray-400">{{ card.sub }}</p>
           <p class="text-xs text-fo-action mt-3 group-hover:underline">View Dashboard &rarr;</p>

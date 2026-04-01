@@ -12,8 +12,6 @@ const categories = [
   { key: 'organic', label: 'Organic' },
   { key: 'paid', label: 'Paid' },
   { key: 'ai_visibility', label: 'AI Visibility' },
-  { key: 'competitor', label: 'Competitor' },
-  { key: 'cross_channel', label: 'Cross-Channel' },
 ]
 
 const priorities = ['all', 'high', 'medium', 'low'] as const
@@ -197,25 +195,25 @@ function metricEntries(insight: any): Array<{ label: string; value: string }> {
       <!-- Summary Cards -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Insights</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total number of actionable insights generated from cross-channel analysis">Total Insights</p>
           <p class="text-2xl font-bold text-gray-900">{{ summary.total }}</p>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">High Priority</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Urgent issues that could significantly impact performance if not addressed">High Priority</p>
           <div class="flex items-baseline gap-2">
             <p class="text-2xl font-bold text-status-down">{{ summary.high }}</p>
             <p class="text-xs text-gray-400">need attention</p>
           </div>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Medium Priority</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Opportunities worth reviewing that could improve performance">Medium Priority</p>
           <div class="flex items-baseline gap-2">
             <p class="text-2xl font-bold text-amber">{{ summary.medium }}</p>
             <p class="text-xs text-gray-400">worth reviewing</p>
           </div>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Low Priority</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Minor items to keep an eye on — no immediate action needed">Low Priority</p>
           <div class="flex items-baseline gap-2">
             <p class="text-2xl font-bold text-gray-400">{{ summary.low }}</p>
             <p class="text-xs text-gray-400">monitor</p>
@@ -272,10 +270,10 @@ function metricEntries(insight: any): Array<{ label: string; value: string }> {
             <div class="flex-1 min-w-0">
               <!-- Top row: badges + title -->
               <div class="flex items-center gap-2 mb-1.5 flex-wrap">
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider" :class="categoryColor(insight.category)">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider" :class="categoryColor(insight.category)" :title="`Data source: ${categoryLabel(insight.category)}`">
                   {{ categoryLabel(insight.category) }}
                 </span>
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider" :class="priorityColor(insight.priority)">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider" :class="priorityColor(insight.priority)" :title="insight.priority === 'high' ? 'Needs immediate attention' : insight.priority === 'medium' ? 'Worth reviewing soon' : 'Monitor over time'">
                   {{ insight.priority }}
                 </span>
               </div>

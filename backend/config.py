@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     USE_MOCK_TRANSPARENCY: bool = False
     COMPETITOR_DOMAINS: str = "hiya.com,numeracle.com,transunion.com,freecallerregistry.com,tnsi.com"
 
+    # Auth
+    ADMIN_EMAIL: str = "dwashington@firstorion.com"
+    ADMIN_PASSWORD: str = "jm7ZqOKA%PI!mXBG"
+    JWT_SECRET: str = "fo-intel-jwt-k8x2m9pQvR4wZ7nY"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_HOURS: int = 24
+
     class Config:
         env_file = ".env"
 

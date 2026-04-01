@@ -380,15 +380,21 @@ function downloadCsv() {
 }
 
 function truncateUrl(url: string, max = 60) {
-  if (url.length <= max) return url
-  return url.slice(0, max) + '...'
+  if (!url) return '—'
+  try {
+    const u = new URL(url.startsWith('http') ? url : `https://${url}`)
+    const path = u.pathname === '/' ? '/' : u.pathname
+    return path.length > max ? path.slice(0, max) + '...' : path
+  } catch {
+    return url.length > max ? url.slice(0, max) + '...' : url
+  }
 }
 
 const movementTabs = [
-  { key: 'improved', label: 'Improved', color: 'text-status-up' },
-  { key: 'declined', label: 'Declined', color: 'text-status-down' },
-  { key: 'new', label: 'New', color: 'text-fo-action' },
-  { key: 'lost', label: 'Lost', color: 'text-gray-400' },
+  { key: 'improved', label: 'Improved', color: 'text-status-up', tooltip: 'Keywords that moved to a better (lower) position vs previous period' },
+  { key: 'declined', label: 'Declined', color: 'text-status-down', tooltip: 'Keywords that dropped to a worse (higher) position vs previous period' },
+  { key: 'new', label: 'New', color: 'text-fo-action', tooltip: 'Keywords that started ranking for the first time this period' },
+  { key: 'lost', label: 'Lost', color: 'text-gray-400', tooltip: 'Keywords that stopped ranking entirely this period' },
 ]
 </script>
 
@@ -608,7 +614,7 @@ const movementTabs = [
       <div class="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
         <!-- Clicks -->
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Clicks</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total clicks from organic Google search results during this period">Total Clicks</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.organicOverview.total_clicks) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.organicOverview.total_clicks, store.organicOverview.prev_clicks))">
             {{ deltaArrow(delta(store.organicOverview.total_clicks, store.organicOverview.prev_clicks)) }}
@@ -617,7 +623,7 @@ const movementTabs = [
         </div>
         <!-- Impressions -->
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Impressions</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Number of times your pages appeared in Google search results">Total Impressions</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.organicOverview.total_impressions) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.organicOverview.total_impressions, store.organicOverview.prev_impressions))">
             {{ deltaArrow(delta(store.organicOverview.total_impressions, store.organicOverview.prev_impressions)) }}
@@ -626,7 +632,7 @@ const movementTabs = [
         </div>
         <!-- CTR -->
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Avg CTR</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Click-through rate — clicks divided by impressions">Avg CTR</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtPct(store.organicOverview.avg_ctr) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.organicOverview.avg_ctr, store.organicOverview.prev_ctr))">
             {{ deltaArrow(delta(store.organicOverview.avg_ctr, store.organicOverview.prev_ctr)) }}
@@ -635,7 +641,7 @@ const movementTabs = [
         </div>
         <!-- Position (inverted) -->
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Avg Position</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Weighted average position in Google search results (lower is better)">Avg Position</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtPos(store.organicOverview.avg_position) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.organicOverview.avg_position, store.organicOverview.prev_position), true)">
             {{ deltaArrow(delta(store.organicOverview.avg_position, store.organicOverview.prev_position)) }}
@@ -644,13 +650,13 @@ const movementTabs = [
         </div>
         <!-- Keywords -->
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Keywords</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total unique search queries your site ranks for">Keywords</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.organicOverview.unique_queries) }}</p>
           <p class="text-xs mt-1 text-gray-400">ranking queries</p>
         </div>
         <!-- Pages -->
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Pages</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total unique pages on your site that rank in Google search">Pages</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.organicOverview.unique_pages) }}</p>
           <p class="text-xs mt-1 text-gray-400">ranking pages</p>
         </div>
@@ -684,15 +690,15 @@ const movementTabs = [
           <table class="w-full text-sm">
             <thead>
               <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
-                <th class="text-left px-5 py-3 w-8">#</th>
-                <th class="text-left px-5 py-3">Keyword</th>
-                <th class="text-right px-5 py-3">Volume</th>
-                <th class="text-center px-5 py-3 w-20">KD</th>
-                <th class="text-right px-5 py-3">Traffic</th>
-                <th class="text-right px-5 py-3">Change</th>
-                <th class="text-right px-5 py-3">Position</th>
-                <th class="text-right px-5 py-3">Pos Change</th>
-                <th class="text-left px-5 py-3">URL</th>
+                <th class="text-left px-5 py-3 w-8" title="Row number">#</th>
+                <th class="text-left px-5 py-3" title="Search query that triggered your page in Google results">Keyword</th>
+                <th class="text-right px-5 py-3" title="Estimated monthly search volume for this keyword">Volume</th>
+                <th class="text-center px-5 py-3 w-20" title="Keyword difficulty — how competitive this keyword is based on position">KD</th>
+                <th class="text-right px-5 py-3" title="Number of clicks received from this keyword">Traffic</th>
+                <th class="text-right px-5 py-3" title="Click change compared to previous period">Change</th>
+                <th class="text-right px-5 py-3" title="Average ranking position in Google search results (lower is better)">Position</th>
+                <th class="text-right px-5 py-3" title="Position change compared to previous period (up arrow = improved)">Pos Change</th>
+                <th class="text-left px-5 py-3" title="Landing page URL that ranks for this keyword">URL</th>
               </tr>
             </thead>
             <tbody>
@@ -756,7 +762,7 @@ const movementTabs = [
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <!-- Position Distribution -->
         <div class="bg-surface-card rounded-xl border border-surface-border p-5">
-          <h2 class="text-sm font-semibold text-gray-900 mb-4">Position Distribution</h2>
+          <h2 class="text-sm font-semibold text-gray-900 mb-4" title="How your keywords are distributed across Google search result positions over time">Position Distribution</h2>
           <div class="h-56">
             <Bar v-if="posDistChart" :data="posDistChart.data" :options="posDistChart.options" />
           </div>
@@ -789,6 +795,7 @@ const movementTabs = [
               v-for="tab in movementTabs" :key="tab.key"
               class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
               :class="activeMovementTab === tab.key ? `bg-surface-hover ${tab.color}` : 'text-gray-400 hover:text-gray-700'"
+              :title="tab.tooltip"
               @click="activeMovementTab = tab.key"
             >{{ tab.label }}</button>
           </div>

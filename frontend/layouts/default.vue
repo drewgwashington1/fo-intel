@@ -1,10 +1,73 @@
 <script setup lang="ts">
 const { get, post } = useApi()
 const store = useDashboardStore()
+const { init: initAuth, isLoggedIn, logout } = useAuth()
+const router = useRouter()
+
+onMounted(() => {
+  initAuth()
+  if (!isLoggedIn.value) {
+    router.replace('/login')
+  }
+})
 
 const mobileOpen = ref(false)
 const refreshing = ref(false)
 const refreshResult = ref<{ message: string; success: boolean } | null>(null)
+
+// ── Welcome Walkthrough ──
+const showWalkthrough = ref(false)
+const walkthroughStep = ref(0)
+
+const walkthroughSteps = [
+  {
+    title: 'Welcome to FO Intel',
+    description: 'Your competitive and paid search intelligence platform. FO Intel consolidates organic search, paid search, AI visibility, and competitor ad intelligence into one dashboard.',
+  },
+  {
+    title: 'Organic Performance',
+    description: 'Track your Google Search Console data — clicks, impressions, CTR, and keyword rankings. Filter by keyword tags and monitor position movements over time.',
+  },
+  {
+    title: 'Paid Performance',
+    description: 'Analyze your Google Ads campaigns — impression share, CPC, search terms, ad creatives, and competitor ads from the Transparency Center.',
+  },
+  {
+    title: 'AI Visibility',
+    description: 'Monitor how often First Orion appears in AI-generated answers across ChatGPT, Perplexity, Gemini, and more. Track citations and share of voice vs competitors.',
+  },
+  {
+    title: 'Insights & Opportunities',
+    description: 'Cross-channel analysis that surfaces actionable opportunities — declining keywords, impression share recovery, competitor gaps, and AI visibility improvements.',
+  },
+]
+
+function dismissWalkthrough() {
+  showWalkthrough.value = false
+  if (import.meta.client) {
+    localStorage.setItem('fo_intel_walkthrough_seen', 'true')
+  }
+}
+
+function nextStep() {
+  if (walkthroughStep.value < walkthroughSteps.length - 1) {
+    walkthroughStep.value++
+  } else {
+    dismissWalkthrough()
+  }
+}
+
+function prevStep() {
+  if (walkthroughStep.value > 0) {
+    walkthroughStep.value--
+  }
+}
+
+onMounted(() => {
+  if (import.meta.client && !localStorage.getItem('fo_intel_walkthrough_seen')) {
+    showWalkthrough.value = true
+  }
+})
 
 // Competitor management
 const showCompPanel = ref(false)
@@ -179,6 +242,15 @@ async function refreshData() {
         </svg>
         {{ refreshing ? 'Refreshing...' : 'Refresh Data' }}
       </button>
+      <button
+        class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors mt-2"
+        @click="logout(); router.replace('/login')"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+        </svg>
+        Sign out
+      </button>
     </div>
   </aside>
 
@@ -209,4 +281,70 @@ async function refreshData() {
       <slot />
     </div>
   </main>
+
+  <!-- Welcome Walkthrough Modal -->
+  <Teleport to="body">
+    <div v-if="showWalkthrough" class="fixed inset-0 z-[100] flex items-center justify-center">
+      <!-- Backdrop -->
+      <div class="absolute inset-0 bg-black/40" @click="dismissWalkthrough" />
+      <!-- Modal card -->
+      <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+        <!-- Progress bar -->
+        <div class="h-1 bg-gray-100">
+          <div
+            class="h-full bg-fo-action transition-all duration-300"
+            :style="{ width: `${((walkthroughStep + 1) / walkthroughSteps.length) * 100}%` }"
+          />
+        </div>
+
+        <!-- Content -->
+        <div class="p-8">
+          <!-- Step indicator -->
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-3">
+            Step {{ walkthroughStep + 1 }} of {{ walkthroughSteps.length }}
+          </p>
+
+          <!-- Icon -->
+          <div class="w-12 h-12 rounded-xl bg-fo-action/10 flex items-center justify-center mb-4">
+            <div class="w-7 h-7 rounded-lg bg-fo-action flex items-center justify-center">
+              <span class="text-white font-bold text-xs">FO</span>
+            </div>
+          </div>
+
+          <h2 class="text-lg font-bold text-gray-900 mb-2">{{ walkthroughSteps[walkthroughStep].title }}</h2>
+          <p class="text-sm text-gray-500 leading-relaxed">{{ walkthroughSteps[walkthroughStep].description }}</p>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-8 pb-6 flex items-center justify-between">
+          <button
+            class="text-sm text-gray-400 hover:text-gray-700 transition-colors"
+            @click="dismissWalkthrough"
+          >Skip</button>
+
+          <div class="flex items-center gap-3">
+            <button
+              v-if="walkthroughStep > 0"
+              class="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+              @click="prevStep"
+            >Back</button>
+            <button
+              class="px-5 py-2 rounded-lg text-sm font-medium bg-fo-action text-white hover:bg-fo-blue transition-colors"
+              @click="nextStep"
+            >{{ walkthroughStep === walkthroughSteps.length - 1 ? 'Done' : 'Next' }}</button>
+          </div>
+        </div>
+
+        <!-- Step dots -->
+        <div class="flex justify-center gap-1.5 pb-4">
+          <div
+            v-for="(_, i) in walkthroughSteps"
+            :key="i"
+            class="w-1.5 h-1.5 rounded-full transition-colors"
+            :class="i === walkthroughStep ? 'bg-fo-action' : i < walkthroughStep ? 'bg-fo-action/40' : 'bg-gray-200'"
+          />
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>

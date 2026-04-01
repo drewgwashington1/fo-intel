@@ -35,10 +35,23 @@ const isLoss = ref<any[]>([])
 
 // Creatives sub-tabs
 const creativeTabs = ['FO Creatives', 'By Campaign'] as const
+
+// Competitor ads filter
+const selectedCompetitor = ref('all')
+const competitorDomains = computed(() => {
+  const domains = new Set<string>()
+  for (const ad of store.compLongestRunning || []) {
+    if (ad.competitor_domain) domains.add(ad.competitor_domain)
+  }
+  return ['all', ...Array.from(domains).sort()]
+})
+const filteredCompAds = computed(() => {
+  const ads = store.compLongestRunning || []
+  if (selectedCompetitor.value === 'all') return ads
+  return ads.filter((a: any) => a.competitor_domain === selectedCompetitor.value)
+})
 const activeCreativeTab = ref<string>('FO Creatives')
 
-// Competitor Ads sub-views
-const activeCompView = ref('overview')
 
 const isLossLoaded = ref(false)
 
@@ -124,8 +137,8 @@ function truncateUrl(url: string): string {
   if (!url) return '--'
   try {
     const u = new URL(url.startsWith('http') ? url : `https://${url}`)
-    const path = u.pathname === '/' ? '' : u.pathname
-    return `firstorion.com${path.length > 30 ? path.slice(0, 30) + '...' : path}`
+    const path = u.pathname === '/' ? '/' : u.pathname
+    return path.length > 40 ? path.slice(0, 40) + '...' : path
   } catch {
     return url.length > 40 ? url.slice(0, 40) + '...' : url
   }
@@ -175,10 +188,21 @@ function performanceSignal(ad: any): { label: string; class: string } {
   return { label: 'Average', class: 'bg-gray-100 text-gray-500' }
 }
 
+const campaignTypeLabel: Record<string, string> = {
+  SEARCH: 'Search',
+  DEMAND_GEN: 'DemandGen',
+  PERFORMANCE_MAX: 'PMax',
+  DISPLAY: 'Display',
+  VIDEO: 'Video',
+  SHOPPING: 'Shopping',
+}
+
 function adIdentifier(ad: any): string {
-  if (ad.ad_group_name) return ad.ad_group_name
-  if (ad.headline_1) return ad.headline_1
-  return `Ad #${ad.ad_id}`
+  const typeLabel = campaignTypeLabel[ad.campaign_type] || ad.campaign_type || ad.ad_type || 'Ad'
+  // Find variation number within this campaign
+  const campaignAds = store.creativesPerformance?.filter((a: any) => a.campaign_name === ad.campaign_name) || []
+  const idx = campaignAds.findIndex((a: any) => a.ad_id === ad.ad_id) + 1
+  return `${typeLabel} #${idx || ad.ad_id}`
 }
 
 /* ---- Competitor helpers ---- */
@@ -387,7 +411,7 @@ function downloadCsv() {
     <template v-else-if="activeTab === 'keywords' && store.paidOverview">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Impression Share</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Percentage of eligible impressions your ads received">Impression Share</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtPct(store.paidOverview.avg_impression_share) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.paidOverview.avg_impression_share, store.paidOverview.prev_impression_share))">
             {{ deltaArrow(delta(store.paidOverview.avg_impression_share, store.paidOverview.prev_impression_share)) }}
@@ -395,7 +419,7 @@ function downloadCsv() {
           </p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Avg CPC</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Average cost per click across all paid campaigns">Avg CPC</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtMoney(store.paidOverview.avg_cpc) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.paidOverview.avg_cpc, store.paidOverview.prev_cpc), true)">
             {{ deltaArrow(delta(store.paidOverview.avg_cpc, store.paidOverview.prev_cpc)) }}
@@ -403,7 +427,7 @@ function downloadCsv() {
           </p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Clicks</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total clicks received from paid search ads">Total Clicks</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.paidOverview.total_clicks) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.paidOverview.total_clicks, store.paidOverview.prev_clicks))">
             {{ deltaArrow(delta(store.paidOverview.total_clicks, store.paidOverview.prev_clicks)) }}
@@ -411,7 +435,7 @@ function downloadCsv() {
           </p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Conversions</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Actions completed after clicking your ad (form fills, calls, etc.)">Conversions</p>
           <p class="text-2xl font-bold text-gray-900">{{ Math.round(store.paidOverview.total_conversions).toLocaleString() }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.paidOverview.total_conversions, store.paidOverview.prev_conversions))">
             {{ deltaArrow(delta(store.paidOverview.total_conversions, store.paidOverview.prev_conversions)) }}
@@ -431,16 +455,16 @@ function downloadCsv() {
           <table class="w-full text-sm">
             <thead>
               <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
-                <th class="text-left px-4 py-3 w-10">#</th>
-                <th class="text-left px-4 py-3">Keyword</th>
-                <th class="text-center px-3 py-3 w-10">Ad</th>
-                <th class="text-right px-4 py-3 w-20">Volume</th>
-                <th class="text-left px-4 py-3 w-36">CPC</th>
-                <th class="text-right px-4 py-3 w-20">Traffic</th>
-                <th class="text-right px-4 py-3 w-20">Position</th>
-                <th class="text-left px-4 py-3">URL</th>
-                <th class="text-right px-4 py-3 w-24">Organic traffic</th>
-                <th class="text-right px-4 py-3 w-24">Organic position</th>
+                <th class="text-left px-4 py-3 w-10" title="Row number">#</th>
+                <th class="text-left px-4 py-3" title="Search term that triggered your paid ad">Keyword</th>
+                <th class="text-center px-3 py-3 w-10" title="Ad match type — Exact, Phrase, or Broad">Ad</th>
+                <th class="text-right px-4 py-3 w-20" title="Estimated monthly search volume">Volume</th>
+                <th class="text-left px-4 py-3 w-36" title="Cost per click — amount paid each time someone clicks your ad">CPC</th>
+                <th class="text-right px-4 py-3 w-20" title="Number of clicks from this search term">Traffic</th>
+                <th class="text-right px-4 py-3 w-20" title="Average ad position for this keyword">Position</th>
+                <th class="text-left px-4 py-3" title="Landing page URL for this search term">URL</th>
+                <th class="text-right px-4 py-3 w-24" title="Organic (non-paid) clicks for the same keyword">Organic traffic</th>
+                <th class="text-right px-4 py-3 w-24" title="Organic ranking position for the same keyword">Organic position</th>
               </tr>
             </thead>
             <tbody>
@@ -500,12 +524,12 @@ function downloadCsv() {
           <table class="w-full text-sm">
             <thead>
               <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
-                <th class="text-left px-5 py-3">URL</th>
-                <th class="text-right px-5 py-3">Traffic</th>
-                <th class="text-right px-5 py-3">Impressions</th>
-                <th class="text-right px-5 py-3">CTR</th>
-                <th class="text-right px-5 py-3">Avg Position</th>
-                <th class="text-right px-5 py-3">Keywords</th>
+                <th class="text-left px-5 py-3" title="Landing page URL receiving paid traffic">URL</th>
+                <th class="text-right px-5 py-3" title="Total paid clicks to this page">Traffic</th>
+                <th class="text-right px-5 py-3" title="Number of times ads linking to this page were shown">Impressions</th>
+                <th class="text-right px-5 py-3" title="Click-through rate — clicks divided by impressions">CTR</th>
+                <th class="text-right px-5 py-3" title="Average ad position for this landing page">Avg Position</th>
+                <th class="text-right px-5 py-3" title="Number of unique keywords driving paid traffic to this page">Keywords</th>
               </tr>
             </thead>
             <tbody>
@@ -551,11 +575,11 @@ function downloadCsv() {
           <div class="p-5 space-y-4">
             <div class="grid grid-cols-2 gap-4">
               <div class="bg-surface rounded-lg p-4 text-center">
-                <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Avg Lost to Budget</p>
+                <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Average percentage of impressions lost due to insufficient daily budget">Avg Lost to Budget</p>
                 <p class="text-xl font-bold text-amber">{{ (Number(store.paidOverview.avg_lost_budget) * 100).toFixed(1) }}%</p>
               </div>
               <div class="bg-surface rounded-lg p-4 text-center">
-                <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Avg Lost to Rank</p>
+                <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Average percentage of impressions lost due to low ad rank or quality score">Avg Lost to Rank</p>
                 <p class="text-xl font-bold text-status-down">{{ (Number(store.paidOverview.avg_lost_rank) * 100).toFixed(1) }}%</p>
               </div>
             </div>
@@ -577,14 +601,14 @@ function downloadCsv() {
           <table class="w-full text-sm">
             <thead>
               <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
-                <th class="text-left px-5 py-3">Campaign</th>
-                <th class="text-right px-5 py-3">Spend</th>
-                <th class="text-right px-5 py-3">Clicks</th>
-                <th class="text-right px-5 py-3">CPC</th>
-                <th class="text-right px-5 py-3">Conv</th>
-                <th class="text-right px-5 py-3">IS%</th>
-                <th class="text-right px-5 py-3">Lost Budget%</th>
-                <th class="text-right px-5 py-3">Lost Rank%</th>
+                <th class="text-left px-5 py-3" title="Google Ads campaign name">Campaign</th>
+                <th class="text-right px-5 py-3" title="Total spend for this campaign">Spend</th>
+                <th class="text-right px-5 py-3" title="Total clicks received">Clicks</th>
+                <th class="text-right px-5 py-3" title="Average cost per click">CPC</th>
+                <th class="text-right px-5 py-3" title="Actions completed after clicking your ad (form fills, calls, etc.)">Conv</th>
+                <th class="text-right px-5 py-3" title="Percentage of eligible impressions your ads received">IS%</th>
+                <th class="text-right px-5 py-3" title="Percentage of impressions lost because of insufficient budget">Lost Budget%</th>
+                <th class="text-right px-5 py-3" title="Percentage of impressions lost because of low ad rank or quality score">Lost Rank%</th>
               </tr>
             </thead>
             <tbody>
@@ -609,11 +633,11 @@ function downloadCsv() {
       <!-- Creatives KPI Cards -->
       <div v-if="store.creativesOverview" class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Active Creatives</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Number of ad creatives currently running">Active Creatives</p>
           <p class="text-2xl font-bold text-gray-900">{{ store.creativesOverview.total_creatives }}</p>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Clicks</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total clicks across all ad creatives">Total Clicks</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.creativesOverview.total_clicks) }}</p>
           <p v-if="store.creativesOverview.prev_clicks" class="text-xs mt-0.5"
             :class="deltaClass(delta(store.creativesOverview.total_clicks, store.creativesOverview.prev_clicks))">
@@ -622,11 +646,11 @@ function downloadCsv() {
           </p>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Avg Click Rate</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Average click-through rate across all ad creatives">Avg Click Rate</p>
           <p class="text-2xl font-bold" :class="ctrColor(store.creativesOverview.avg_ctr)">{{ fmtPct(store.creativesOverview.avg_ctr) }}</p>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Conversions</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total conversions across all ad creatives">Conversions</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(Math.round(store.creativesOverview.total_conversions)) }}</p>
         </div>
       </div>
@@ -655,13 +679,13 @@ function downloadCsv() {
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-surface-border">
-                    <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Ad / Campaign</th>
-                    <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Type</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Clicks</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Click Rate</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Conversions</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Conv Rate</th>
-                    <th class="text-center px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Performance</th>
+                    <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Ad creative identifier and parent campaign">Ad / Campaign</th>
+                    <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Campaign type (Search, DemandGen, PMax, etc.)">Type</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Total clicks this ad creative received">Clicks</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Click-through rate — clicks divided by impressions">Click Rate</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Actions completed after clicking this ad">Conversions</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Conversion rate — conversions divided by clicks">Conv Rate</th>
+                    <th class="text-center px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Performance signal based on CTR and conversion rate vs average (Strong, Good, Average, Needs Work)">Performance</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -709,12 +733,12 @@ function downloadCsv() {
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-surface-border">
-                    <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Campaign</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Creatives</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Clicks</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Click Rate</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Conversions</th>
-                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Conv Rate</th>
+                    <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Google Ads campaign name">Campaign</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Number of ad creatives in this campaign">Creatives</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Total clicks across all creatives in this campaign">Clicks</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Click-through rate — clicks divided by impressions">Click Rate</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Total conversions from this campaign's creatives">Conversions</th>
+                    <th class="text-right px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium" title="Conversion rate — conversions divided by clicks">Conv Rate</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -785,151 +809,84 @@ function downloadCsv() {
       <!-- Competitor KPIs -->
       <div v-if="store.compOverview" class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Competitors Tracked</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Number of competitor domains being monitored">Competitors Tracked</p>
           <p class="text-2xl font-bold text-gray-900">{{ store.compOverview.competitors_tracked }}</p>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Active Ads</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total currently running ads across all tracked competitors">Active Ads</p>
           <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.compOverview.active_ads) }}</p>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">New This Week</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Competitor ads first detected in the last 7 days">New This Week</p>
           <p class="text-2xl font-bold text-amber">{{ fmtNum(store.compOverview.new_this_week) }}</p>
         </div>
         <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
-          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Longest Running</p>
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Duration of the longest continuously running competitor ad">Longest Running</p>
           <p class="text-2xl font-bold text-status-up">{{ store.compOverview.longest_running ?? '--' }} <span class="text-sm font-normal text-gray-400">days</span></p>
         </div>
       </div>
 
-      <!-- Competitor sub-views -->
-      <div class="flex gap-1 bg-surface-card rounded-lg p-1 border border-surface-border mb-6 w-fit">
-        <button
-          v-for="v in [{ key: 'overview', label: 'By Competitor' }, { key: 'new', label: 'New This Week' }, { key: 'proven', label: 'Proven Ads' }]"
-          :key="v.key"
-          class="px-4 py-1.5 rounded-md text-xs font-medium transition-colors"
-          :class="activeCompView === v.key ? 'bg-fo-action text-white' : 'text-gray-500 hover:text-gray-900'"
-          @click="activeCompView = v.key"
-        >{{ v.label }}</button>
-      </div>
-
-      <!-- By Competitor -->
-      <div v-if="activeCompView === 'overview'" class="space-y-4">
-        <div
-          v-for="comp in competitorSummaries"
-          :key="comp.competitor_domain"
-          class="bg-surface-card rounded-xl border border-surface-border overflow-hidden"
+      <!-- Competitor filter -->
+      <div class="flex items-center gap-3 mb-4">
+        <select
+          v-model="selectedCompetitor"
+          class="px-3 py-2 text-xs rounded-lg border border-surface-border bg-surface-card focus:outline-none focus:border-fo-action"
         >
-          <div class="px-5 py-4 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <span class="text-sm font-semibold text-gray-900">{{ comp.competitor_domain }}</span>
-              <span v-if="comp.isAggressive" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-status-down/15 text-status-down">HIGH ACTIVITY</span>
-              <span v-if="comp.newCount > 0" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber/15 text-amber">{{ comp.newCount }} NEW</span>
-            </div>
-            <div class="flex items-center gap-4 text-sm">
-              <span class="text-gray-900 font-medium">{{ comp.active_ads }} active</span>
-              <span class="text-gray-400">{{ comp.total_ads }} total</span>
-              <span class="text-gray-400">avg {{ comp.avg_days_running }} days</span>
-            </div>
-          </div>
-          <div v-if="comp.topAds.length" class="border-t border-surface-border divide-y divide-surface-border">
-            <div v-for="ad in comp.topAds" :key="ad.headline" class="px-5 py-3 flex items-center gap-3">
-              <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" :d="formatIcon[ad.ad_format] || formatIcon.TEXT" />
-              </svg>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm text-gray-900 truncate">{{ ad.headline }}</p>
-                <p class="text-xs text-gray-400 truncate">{{ ad.description?.slice(0, 80) }}</p>
-              </div>
-              <div class="text-right shrink-0">
-                <span class="text-sm font-medium" :class="ad.days_running >= 90 ? 'text-status-up' : 'text-gray-700'">{{ ad.days_running }}d</span>
-              </div>
-            </div>
-          </div>
-        </div>
+          <option v-for="d in competitorDomains" :key="d" :value="d">
+            {{ d === 'all' ? 'All Competitors' : d }}
+          </option>
+        </select>
+        <span class="text-xs text-gray-400">{{ filteredCompAds.length }} ads</span>
       </div>
 
-      <!-- New This Week -->
-      <div v-if="activeCompView === 'new'">
-        <div v-if="newAdsByCompetitor.length" class="space-y-4">
-          <div v-for="group in newAdsByCompetitor" :key="group.domain" class="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
-            <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
-              <span class="text-sm font-semibold text-gray-900">{{ group.domain }}</span>
-              <span class="text-xs text-amber font-medium">{{ group.count }} new ad{{ group.count > 1 ? 's' : '' }}</span>
-            </div>
-            <div class="divide-y divide-surface-border">
-              <div v-for="ad in group.ads" :key="ad.headline" class="px-5 py-3">
-                <div class="flex items-center gap-2 mb-1">
+      <!-- Competitor ads table -->
+      <div class="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-surface-border">
+                <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Competitor</th>
+                <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Ad Copy</th>
+                <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Landing Page</th>
+                <th class="text-center px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Type</th>
+                <th class="text-left px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Started</th>
+                <th class="text-center px-4 py-3 text-[10px] uppercase tracking-wider text-gray-400 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="ad in filteredCompAds"
+                :key="ad.headline + ad.competitor_domain"
+                class="border-b border-surface-border last:border-0 hover:bg-surface-hover transition-colors"
+              >
+                <td class="px-4 py-3">
+                  <span class="text-sm font-medium text-fo-action">{{ ad.competitor_domain }}</span>
+                </td>
+                <td class="px-4 py-3 max-w-md">
+                  <p class="text-sm text-gray-900 font-medium">{{ ad.headline }}</p>
+                  <p v-if="ad.description" class="text-xs text-gray-500 mt-0.5 line-clamp-2">{{ ad.description }}</p>
+                </td>
+                <td class="px-4 py-3">
+                  <span v-if="ad.destination_url" class="text-xs text-fo-action truncate max-w-[200px] inline-block" :title="ad.destination_url">{{ ad.destination_url }}</span>
+                  <span v-else class="text-xs text-gray-400">--</span>
+                </td>
+                <td class="px-4 py-3 text-center">
                   <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{{ ad.ad_format }}</span>
-                  <span class="text-xs text-gray-400">{{ new Date(ad.first_shown_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }}</span>
-                </div>
-                <p class="text-sm font-medium text-gray-900">{{ ad.headline }}</p>
-                <p v-if="ad.description" class="text-xs text-gray-500 mt-0.5">{{ ad.description }}</p>
-                <p v-if="ad.destination_url" class="text-xs text-fo-action mt-1 truncate">{{ ad.destination_url }}</p>
-              </div>
-            </div>
-          </div>
+                </td>
+                <td class="px-4 py-3 text-xs text-gray-500">
+                  {{ ad.first_shown_date ? new Date(ad.first_shown_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '--' }}
+                </td>
+                <td class="px-4 py-3 text-center">
+                  <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    :class="ad.is_active ? 'bg-status-up/15 text-status-up' : 'bg-gray-100 text-gray-400'"
+                  >{{ ad.is_active ? 'Live' : 'Ended' }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div v-else class="bg-surface-card rounded-xl border border-surface-border p-8 text-center">
-          <p class="text-sm text-gray-500">No new competitor ads detected this week.</p>
-        </div>
-      </div>
-
-      <!-- Proven Ads (60+ days) -->
-      <div v-if="activeCompView === 'proven'">
-        <div class="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
-          <div class="px-5 py-3 border-b border-surface-border">
-            <h3 class="text-sm font-semibold text-gray-900">Ads Running 60+ Days</h3>
-            <p class="text-xs text-gray-400 mt-0.5">Long-running ads indicate strong performance for these competitors</p>
-          </div>
-          <div class="divide-y divide-surface-border">
-            <div
-              v-for="(ad, i) in store.compLongestRunning"
-              :key="i"
-              class="hover:bg-surface-hover transition-colors cursor-pointer"
-              @click="toggleAd(i)"
-            >
-              <div class="px-5 py-4 flex items-start gap-4">
-                <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                  :class="{ 'bg-fo-action/10': ad.ad_format === 'TEXT', 'bg-amber/10': ad.ad_format === 'IMAGE', 'bg-status-down/10': ad.ad_format === 'VIDEO' }">
-                  <svg class="w-5 h-5" :class="{ 'text-fo-action': ad.ad_format === 'TEXT', 'text-amber': ad.ad_format === 'IMAGE', 'text-status-down': ad.ad_format === 'VIDEO' }"
-                    fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" :d="formatIcon[ad.ad_format] || formatIcon.TEXT" />
-                  </svg>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 mb-1">
-                    <span class="text-sm font-medium text-fo-action">{{ ad.competitor_domain }}</span>
-                    <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{{ ad.ad_format }}</span>
-                  </div>
-                  <p class="text-sm text-gray-900">{{ ad.headline }}</p>
-                  <p class="text-xs text-gray-400 mt-1">Running since {{ new Date(ad.first_shown_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }}</p>
-                </div>
-                <div class="text-right shrink-0">
-                  <span class="text-lg font-bold text-status-up">{{ ad.days_running }}</span>
-                  <p class="text-[10px] text-gray-400">days</p>
-                </div>
-              </div>
-              <div v-if="expandedAd === i" class="px-5 pb-4 ml-14">
-                <div class="bg-surface rounded-lg p-4 border border-surface-border text-xs space-y-2">
-                  <div v-if="ad.description">
-                    <p class="text-gray-400 uppercase tracking-wider mb-1">Ad Copy</p>
-                    <p class="text-gray-700">{{ ad.description }}</p>
-                  </div>
-                  <div v-if="ad.destination_url">
-                    <p class="text-gray-400 uppercase tracking-wider mb-1">Landing Page</p>
-                    <p class="text-fo-action">{{ ad.destination_url }}</p>
-                  </div>
-                  <div v-if="ad.platforms?.length">
-                    <p class="text-gray-400 uppercase tracking-wider mb-1">Platforms</p>
-                    <div class="flex gap-1.5">
-                      <span v-for="p in ad.platforms" :key="p" class="px-2 py-0.5 rounded bg-surface-hover text-gray-700 text-[10px]">{{ p }}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div v-if="!filteredCompAds?.length" class="p-8 text-center">
+          <p class="text-sm text-gray-500">No competitor ads data. Run the Competitor Ads pipeline.</p>
         </div>
       </div>
     </template>

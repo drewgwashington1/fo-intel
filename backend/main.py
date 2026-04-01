@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import app_settings
 from database import engine, Base, get_db_session
-from routers import dashboard, ingest
+from routers import auth, dashboard, ingest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,6 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["Ingest"])
 
@@ -40,21 +41,24 @@ def startup():
         try:
             from sqlalchemy import text as sa_text
             # Check if summary_cache has any data
+            from services.summaries import rebuild_all_keyword_maps, rebuild_summaries, invalidate_scope
             count = db.execute(sa_text("SELECT COUNT(*) FROM summary_cache")).scalar()
             if count == 0:
-                logger.info("No cached summaries — building initial summaries in background...")
-                from services.summaries import rebuild_all_keyword_maps, rebuild_summaries
+                logger.info("No cached summaries — building all summaries...")
                 rebuild_all_keyword_maps(db)
                 rebuild_summaries(db, "all")
-                # Build insights too
-                from routers.insights import _compute_insights
-                try:
-                    _compute_insights(30, db)
-                except Exception as e:
-                    logger.warning(f"Initial insights build failed: {e}")
-                logger.info("Initial summary build complete")
             else:
-                logger.info(f"Summary cache has {count} entries — skipping initial build")
+                logger.info(f"Summary cache has {count} entries")
+
+            # Always rebuild insights on startup (logic may have changed between deploys)
+            logger.info("Rebuilding insights cache...")
+            invalidate_scope(db, "insights")
+            from routers.insights import _compute_insights
+            try:
+                _compute_insights(30, db)
+                logger.info("Insights rebuild complete")
+            except Exception as e:
+                logger.warning(f"Insights rebuild failed: {e}")
         except Exception as e:
             logger.error(f"Initial summary build failed: {e}")
         finally:
