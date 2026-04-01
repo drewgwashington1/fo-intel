@@ -1181,7 +1181,7 @@ const movementTabs = [
             </thead>
             <tbody>
               <tr
-                v-for="(comp, i) in organicCompetitors"
+                v-for="(comp, i) in organicCompetitors.filter(c => !c.is_self)"
                 :key="comp.domain"
                 class="border-b border-surface-border last:border-0 hover:bg-surface-hover transition-colors"
                 :class="comp.is_self ? 'bg-fo-action/5 border-l-2 border-l-fo-action' : ''"
