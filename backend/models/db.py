@@ -323,3 +323,14 @@ class PipelineStatus(Base):
     pipeline_name = Column(String, primary_key=True)
     last_run_at = Column(DateTime(timezone=True), server_default=func.now())
     rows_processed = Column(Integer, default=0)
+
+
+class AppUser(Base):
+    """Application users for login."""
+    __tablename__ = "app_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False, unique=True)
+    password_hash = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="viewer")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

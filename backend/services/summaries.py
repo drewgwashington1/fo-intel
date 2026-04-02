@@ -512,14 +512,27 @@ def build_organic_competitors(db: Session, days: int = 90):
             WHERE osr.observed_date >= :start
               AND osr.domain = ANY(:domains)
             GROUP BY osr.domain, osr.keyword
+        ),
+        fo_on_shared AS (
+            SELECT cr.domain AS competitor_domain,
+                   cr.keyword,
+                   MIN(op.position) AS fo_position
+            FROM competitor_rankings cr
+            JOIN organic_performance op ON LOWER(op.query) = LOWER(cr.keyword)
+            WHERE op.data_date >= :start
+            GROUP BY cr.domain, cr.keyword
         )
-        SELECT domain,
-               COUNT(DISTINCT keyword) AS common_keywords,
-               ROUND(AVG(best_position)::numeric, 1) AS avg_position,
-               COUNT(DISTINCT keyword) FILTER (WHERE best_position <= 3) AS top3,
-               COUNT(DISTINCT keyword) FILTER (WHERE best_position <= 10) AS top10
-        FROM competitor_rankings
-        GROUP BY domain
+        SELECT cr.domain,
+               COUNT(DISTINCT cr.keyword) AS common_keywords,
+               ROUND(AVG(cr.best_position)::numeric, 1) AS avg_position,
+               ROUND(AVG(fs.fo_position)::numeric, 1) AS fo_avg_position,
+               COUNT(DISTINCT cr.keyword) FILTER (WHERE cr.best_position <= 3) AS top3,
+               COUNT(DISTINCT cr.keyword) FILTER (WHERE cr.best_position <= 10) AS top10,
+               COUNT(DISTINCT cr.keyword) FILTER (WHERE cr.best_position < fs.fo_position) AS competitor_wins,
+               COUNT(DISTINCT cr.keyword) FILTER (WHERE cr.best_position >= fs.fo_position) AS fo_wins
+        FROM competitor_rankings cr
+        LEFT JOIN fo_on_shared fs ON fs.competitor_domain = cr.domain AND LOWER(fs.keyword) = LOWER(cr.keyword)
+        GROUP BY cr.domain
         ORDER BY common_keywords DESC
     """), {"start": start, "domains": tracked_domains}).mappings().all()
 
@@ -527,7 +540,13 @@ def build_organic_competitors(db: Session, days: int = 90):
     result = []
     for r in rows:
         d = dict(r)
-        d["overlap_pct"] = round(d["common_keywords"] / our_keywords * 100, 1)
+        d["avg_position"] = float(d["avg_position"] or 0)
+        d["fo_avg_position"] = float(d["fo_avg_position"] or 0)
+        d["common_keywords"] = int(d["common_keywords"])
+        d["top3"] = int(d["top3"])
+        d["top10"] = int(d["top10"])
+        d["competitor_wins"] = int(d["competitor_wins"] or 0)
+        d["fo_wins"] = int(d["fo_wins"] or 0)
         result.append(d)
 
     # Include tracked competitors with no SERP data yet (show as 0)
@@ -537,32 +556,12 @@ def build_organic_competitors(db: Session, days: int = 90):
                 "domain": domain,
                 "common_keywords": 0,
                 "avg_position": 0,
+                "fo_avg_position": 0,
                 "top3": 0,
                 "top10": 0,
-                "overlap_pct": 0,
+                "competitor_wins": 0,
+                "fo_wins": 0,
             })
-
-    # Add firstorion.com's own stats from GSC data
-    fo_stats = db.execute(text("""
-        SELECT COUNT(DISTINCT query) AS total_keywords,
-               CASE WHEN SUM(impressions) > 0
-                    THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1)
-                    ELSE 0 END AS avg_position,
-               COUNT(DISTINCT query) FILTER (WHERE position <= 3) AS top3,
-               COUNT(DISTINCT query) FILTER (WHERE position <= 10) AS top10
-        FROM organic_performance WHERE data_date >= :start
-    """), {"start": start}).mappings().first()
-
-    if fo_stats:
-        result.insert(0, {
-            "domain": "firstorion.com",
-            "common_keywords": int(fo_stats["total_keywords"]),
-            "avg_position": float(fo_stats["avg_position"]),
-            "top3": int(fo_stats["top3"]),
-            "top10": int(fo_stats["top10"]),
-            "overlap_pct": 100.0,
-            "is_self": True,
-        })
 
     set_cached(db, key, result)
     return result
@@ -766,16 +765,19 @@ def build_ai_overview(db: Session, days: int):
 
     citation_count = db.execute(text(
         "SELECT COUNT(*) FROM ai_citations WHERE data_date >= :start"
-    ), {"start": start}).scalar()
+    ), {"start": start}).scalar() or 0
+
+    prev_citation_count = db.execute(text(
+        "SELECT COUNT(*) FROM ai_citations WHERE data_date >= :prev_start AND data_date < :prev_end"
+    ), {"prev_start": prev_start, "prev_end": prev_end}).scalar() or 0
 
     result = {
         "avg_visibility": float(current["avg_visibility"] or 0),
         "avg_sov": float(current["avg_sov"] or 0),
-        "total_citations": int(current["total_citations"] or 0),
-        "total_citation_records": citation_count or 0,
+        "total_citations": citation_count,
         "prev_visibility": float(previous["avg_visibility"] or 0),
         "prev_sov": float(previous["avg_sov"] or 0),
-        "prev_citations": int(previous["total_citations"] or 0),
+        "prev_citations": prev_citation_count,
     }
     set_cached(db, key, result)
     return result
@@ -785,11 +787,17 @@ def build_ai_platforms(db: Session, days: int):
     key = f"ai_platforms:{days}"
     start = _period(days)
     rows = db.execute(text("""
-        SELECT platform, ROUND(AVG(visibility_score)::numeric, 1) AS avg_visibility,
-               ROUND(AVG(share_of_voice)::numeric, 4) AS avg_sov,
-               COALESCE(SUM(citation_count), 0) AS citations
-        FROM ai_visibility WHERE data_date >= :start
-        GROUP BY platform ORDER BY avg_visibility DESC
+        SELECT av.platform, ROUND(AVG(av.visibility_score)::numeric, 1) AS avg_visibility,
+               ROUND(AVG(av.share_of_voice)::numeric, 4) AS avg_sov,
+               COALESCE(c.citations, 0) AS citations
+        FROM ai_visibility av
+        LEFT JOIN (
+            SELECT platform, COUNT(*) AS citations
+            FROM ai_citations WHERE data_date >= :start
+            GROUP BY platform
+        ) c ON c.platform = av.platform
+        WHERE av.data_date >= :start
+        GROUP BY av.platform, c.citations ORDER BY avg_visibility DESC
     """), {"start": start}).mappings().all()
     result = [dict(r) for r in rows]
     set_cached(db, key, result)

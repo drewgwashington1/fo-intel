@@ -13,7 +13,7 @@ const periods = [
 ]
 
 // ── Tags (dynamic keyword groups) ───────────────────────────────
-const activeCategory = ref<'all' | 'branded' | 'non-branded'>('non-branded')
+const activeCategory = ref<'all' | 'branded' | 'non-branded'>('all')
 const activeTag = ref('all')
 const tags = ref<{ list_name: string; term_count: number }[]>([])
 const tagTerms = ref<Record<string, any[]>>({})  // tag_name -> [{id, term, category}]
@@ -71,36 +71,6 @@ const movements = ref<any>(null)
 const countries = ref<any[]>([])
 const organicCompetitors = ref<any[]>([])
 
-const trackedCompDomains = [
-  { domain: 'hiya.com', textColor: 'text-emerald-600', dotColor: 'bg-emerald-500' },
-  { domain: 'numeracle.com', textColor: 'text-purple-600', dotColor: 'bg-purple-500' },
-  { domain: 'transunion.com', textColor: 'text-amber-600', dotColor: 'bg-amber-500' },
-  { domain: 'freecallerregistry.com', textColor: 'text-pink-600', dotColor: 'bg-pink-500' },
-  { domain: 'tnsi.com', textColor: 'text-cyan-600', dotColor: 'bg-cyan-500' },
-]
-const trackedCompSet = new Set(trackedCompDomains.map(c => c.domain))
-
-function compData(domain: string) {
-  return organicCompetitors.value.find(c => c.domain === domain)
-}
-
-const BUBBLE_COLORS = [
-  '59, 130, 246',   // blue
-  '16, 185, 129',   // emerald
-  '168, 85, 247',   // purple
-  '245, 158, 11',   // amber
-  '236, 72, 153',   // pink
-  '6, 182, 212',    // cyan
-  '239, 68, 68',    // red
-  '99, 102, 241',   // indigo
-  '234, 179, 8',    // yellow
-  '244, 63, 94',    // rose
-  '20, 184, 166',   // teal
-  '139, 92, 246',   // violet
-]
-function bubbleColor(i: number, alpha: number) {
-  return `rgba(${BUBBLE_COLORS[i % BUBBLE_COLORS.length]}, ${alpha})`
-}
 const activeMovementTab = ref('improved')
 
 const TAG_COLORS = [
@@ -195,7 +165,7 @@ async function removeTerm(tagName: string, term: string) {
 
 async function toggleCategory(keywordId: number, currentCategory: string) {
   const newCat = currentCategory === 'branded' ? 'non-branded' : 'branded'
-  await patch(`/dashboard/keywords/${keywordId}/category`, { category: newCat })
+  await patch(`/dashboard/keywords/${keywordId}/category?category=${newCat}`)
   afterKeywordChange()
 }
 
@@ -965,7 +935,7 @@ const movementTabs = [
           <!-- Movement list -->
           <div v-if="movements" class="p-5 space-y-0 max-h-80 overflow-y-auto">
             <div
-              v-for="kw in movements.details[activeMovementTab]?.slice(0, 15)"
+              v-for="kw in movements.details?.[activeMovementTab]?.slice(0, 15)"
               :key="kw.query"
               class="flex items-center justify-between py-2.5 border-b border-surface-border last:border-0 gap-4"
             >
@@ -1104,109 +1074,66 @@ const movementTabs = [
     <!-- TAB 3: Organic Competitors -->
     <!-- ============================================ -->
     <template v-else-if="activeTab === 'competitors'">
-      <!-- Tracked competitor chips -->
-      <div class="flex flex-wrap items-center gap-2 mb-6">
-        <span class="text-[10px] uppercase tracking-wider text-gray-400 mr-1">Tracked:</span>
-        <span
-          v-for="(comp, i) in trackedCompDomains"
-          :key="comp.domain"
-          class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border border-surface-border bg-surface-card"
-          :class="comp.textColor"
-        >
-          <span class="w-2 h-2 rounded-full" :class="comp.dotColor" />
-          {{ comp.domain }}
-          <span v-if="compData(comp.domain)" class="text-gray-400 font-normal">{{ compData(comp.domain)?.common_keywords }} kw</span>
-        </span>
-      </div>
-
-      <!-- Bubble chart — competitor keyword overlap visualization -->
-      <div v-if="organicCompetitors.length" class="bg-surface-card rounded-xl border border-surface-border p-5 mb-6">
-        <h2 class="text-sm font-semibold text-gray-900 mb-2">Keyword Overlap</h2>
-        <p class="text-xs text-gray-400 mb-4">Bubble size = common keywords, position = avg SERP ranking</p>
-        <div class="relative h-72 rounded-lg bg-surface/50 border border-surface-border overflow-hidden">
-          <!-- Y-axis labels -->
-          <div class="absolute left-2 top-2 text-[9px] text-gray-400">Top 3</div>
-          <div class="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-400">Top 10</div>
-          <div class="absolute left-2 bottom-2 text-[9px] text-gray-400">50+</div>
-          <!-- Grid lines -->
-          <div class="absolute left-8 right-0 top-[33%] border-t border-dashed border-gray-200" />
-          <div class="absolute left-8 right-0 top-[66%] border-t border-dashed border-gray-200" />
-          <!-- Bubbles -->
-          <div
-            v-for="(comp, i) in organicCompetitors.filter(c => c.common_keywords > 0)"
-            :key="comp.domain"
-            class="absolute rounded-full flex items-center justify-center transition-all duration-300 cursor-default"
-            :class="comp.is_self ? 'border-2 border-fo-action ring-2 ring-fo-action/20' : 'border-2'"
-            :style="{
-              width: Math.max(50, Math.min(140, comp.common_keywords * 2.5)) + 'px',
-              height: Math.max(50, Math.min(140, comp.common_keywords * 2.5)) + 'px',
-              top: Math.min(80, Math.max(5, (comp.avg_position / 60) * 80)) + '%',
-              left: (12 + (i % 5) * 16 + (i >= 5 ? 8 : 0)) + '%',
-              backgroundColor: comp.is_self ? 'rgba(245,166,35,0.15)' : bubbleColor(i, 0.12),
-              borderColor: comp.is_self ? '#F5A623' : bubbleColor(i, 0.5),
-            }"
-            :title="`${comp.domain}: ${comp.common_keywords} keywords, avg pos ${comp.avg_position}`"
-          >
-            <div class="text-center px-1">
-              <span class="text-[9px] font-semibold leading-tight block" :style="{ color: comp.is_self ? '#F5A623' : bubbleColor(i, 1) }">
-                {{ comp.domain.replace('.com', '').replace('.org', '') }}
-              </span>
-              <span class="text-[8px] opacity-60 block" :style="{ color: comp.is_self ? '#F5A623' : bubbleColor(i, 1) }">
-                {{ comp.common_keywords }} kw
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Top competing domains table -->
+      <!-- Competitor comparison table -->
       <div v-if="organicCompetitors.length" class="bg-surface-card rounded-xl border border-surface-border mb-6">
         <div class="px-5 py-4 border-b border-surface-border">
-          <h2 class="text-sm font-semibold text-gray-900">Competing domains</h2>
-          <p class="text-xs text-gray-400 mt-0.5">Domains ranking for the same keywords as firstorion.com (from SERP data)</p>
+          <h2 class="text-sm font-semibold text-gray-900">SERP Competitors</h2>
+          <p class="text-xs text-gray-400 mt-0.5">How tracked competitors rank on keywords you share (from SERP data)</p>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
               <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
-                <th class="text-left px-5 py-3 w-8" title="Rank by keyword overlap">#</th>
                 <th class="text-left px-5 py-3" title="Competitor domain">Domain</th>
-                <th class="text-center px-5 py-3 w-16" title="Tracked competitor">Tracked</th>
-                <th class="text-right px-5 py-3" title="Number of keywords this domain ranks for that you also rank for">Common Keywords</th>
-                <th class="text-right px-5 py-3" title="Percentage of your keywords this competitor also ranks for">Overlap</th>
-                <th class="text-right px-5 py-3" title="Average ranking position for common keywords">Avg Position</th>
+                <th class="text-right px-5 py-3" title="Keywords both you and this competitor rank for">Shared Keywords</th>
+                <th class="text-right px-5 py-3" title="Competitor's avg position on shared keywords">Their Pos</th>
+                <th class="text-right px-5 py-3" title="Your avg position on those same shared keywords">Your Pos</th>
+                <th class="text-center px-5 py-3" title="Who ranks higher on shared keywords">Head to Head</th>
                 <th class="text-right px-5 py-3" title="Keywords where competitor ranks in top 3">Top 3</th>
                 <th class="text-right px-5 py-3" title="Keywords where competitor ranks in top 10">Top 10</th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="(comp, i) in organicCompetitors.filter(c => !c.is_self)"
+                v-for="comp in organicCompetitors.filter(c => !c.is_self)"
                 :key="comp.domain"
                 class="border-b border-surface-border last:border-0 hover:bg-surface-hover transition-colors"
-                :class="comp.is_self ? 'bg-fo-action/5 border-l-2 border-l-fo-action' : ''"
               >
-                <td class="px-5 py-3 text-gray-400 text-xs">{{ comp.is_self ? '' : i + 1 }}</td>
                 <td class="px-5 py-3">
-                  <div class="flex items-center gap-2">
-                    <span class="text-gray-900 font-medium text-xs">{{ comp.domain }}</span>
-                    <span v-if="comp.is_self" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-fo-action/15 text-fo-action">YOU</span>
-                  </div>
+                  <span class="text-gray-900 font-medium text-xs">{{ comp.domain }}</span>
                 </td>
-                <td class="px-5 py-3 text-center">
-                  <span v-if="!comp.is_self" class="inline-flex w-4 h-4 items-center justify-center rounded-full bg-fo-action/15 text-fo-action text-[10px]">&#10003;</span>
-                </td>
-                <td class="px-5 py-3 text-right text-gray-700 font-medium">{{ comp.common_keywords }}</td>
-                <td class="px-5 py-3 text-right">
-                  <span class="text-xs font-medium" :class="comp.overlap_pct > 30 ? 'text-status-down' : comp.overlap_pct > 10 ? 'text-amber-600' : 'text-gray-500'">
-                    {{ comp.overlap_pct }}%
-                  </span>
-                </td>
+                <td class="px-5 py-3 text-right text-gray-900 font-semibold">{{ fmtNum(comp.common_keywords) }}</td>
                 <td class="px-5 py-3 text-right">
                   <span
                     class="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold"
                     :class="[positionColor(comp.avg_position), positionBgColor(comp.avg_position)]"
                   >{{ fmtPos(comp.avg_position) }}</span>
+                </td>
+                <td class="px-5 py-3 text-right">
+                  <span
+                    class="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold"
+                    :class="[positionColor(comp.fo_avg_position), positionBgColor(comp.fo_avg_position)]"
+                  >{{ fmtPos(comp.fo_avg_position) }}</span>
+                </td>
+                <td class="px-5 py-3 text-center">
+                  <div v-if="comp.common_keywords > 0" class="flex items-center justify-center gap-1.5">
+                    <div class="flex items-center h-4 rounded-full overflow-hidden w-24 bg-gray-100">
+                      <div
+                        class="h-full bg-fo-action/80 rounded-l-full"
+                        :style="{ width: (comp.fo_wins / (comp.fo_wins + comp.competitor_wins) * 100) + '%' }"
+                        :title="`FO wins ${comp.fo_wins}`"
+                      />
+                      <div
+                        class="h-full bg-gray-400/60 rounded-r-full"
+                        :style="{ width: (comp.competitor_wins / (comp.fo_wins + comp.competitor_wins) * 100) + '%' }"
+                        :title="`${comp.domain} wins ${comp.competitor_wins}`"
+                      />
+                    </div>
+                    <span class="text-[10px] font-medium" :class="comp.fo_wins >= comp.competitor_wins ? 'text-fo-action' : 'text-status-down'">
+                      {{ comp.fo_wins }}-{{ comp.competitor_wins }}
+                    </span>
+                  </div>
+                  <span v-else class="text-gray-300 text-xs">--</span>
                 </td>
                 <td class="px-5 py-3 text-right text-status-up text-xs font-medium">{{ comp.top3 }}</td>
                 <td class="px-5 py-3 text-right text-fo-action text-xs font-medium">{{ comp.top10 }}</td>

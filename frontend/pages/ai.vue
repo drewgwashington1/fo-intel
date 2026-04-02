@@ -375,7 +375,7 @@ const citationsByPlatform = computed(() => {
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
           <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Number of times FO pages were directly or indirectly cited in AI answers">Total Citations</p>
-          <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.aiOverview.total_citation_records) }}</p>
+          <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.aiOverview.total_citations) }}</p>
           <p class="text-xs mt-1" :class="deltaClass(delta(store.aiOverview.total_citations, store.aiOverview.prev_citations))">
             {{ deltaArrow(delta(store.aiOverview.total_citations, store.aiOverview.prev_citations)) }}
             {{ Math.abs(delta(store.aiOverview.total_citations, store.aiOverview.prev_citations).pct).toFixed(1) }}%
@@ -500,7 +500,7 @@ const citationsByPlatform = computed(() => {
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">
           <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1" title="Total number of times FO content was cited across all AI platforms">Total Citations</p>
-          <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.aiOverview.total_citation_records) }}</p>
+          <p class="text-2xl font-bold text-gray-900">{{ fmtNum(store.aiOverview.total_citations) }}</p>
           <p class="text-xs mt-1 text-gray-400">Across all AI engines</p>
         </div>
         <div class="bg-surface-card rounded-xl p-5 border border-surface-border">

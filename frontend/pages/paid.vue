@@ -525,7 +525,7 @@ function downloadCsv() {
             <thead>
               <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
                 <th class="text-left px-5 py-3" title="Landing page URL receiving paid traffic">URL</th>
-                <th class="text-right px-5 py-3" title="Total paid clicks to this page">Traffic</th>
+                <th class="text-right px-5 py-3" title="Organic clicks on pages that also have paid search terms">Organic Clicks</th>
                 <th class="text-right px-5 py-3" title="Number of times ads linking to this page were shown">Impressions</th>
                 <th class="text-right px-5 py-3" title="Click-through rate — clicks divided by impressions">CTR</th>
                 <th class="text-right px-5 py-3" title="Average ad position for this landing page">Avg Position</th>

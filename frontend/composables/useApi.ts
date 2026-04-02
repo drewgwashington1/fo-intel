@@ -65,16 +65,11 @@ export function useApi() {
     return res.json()
   }
 
-  async function patch<T = any>(path: string, params?: Record<string, any>): Promise<T> {
-    const url = new URL(`${base}${path}`)
-    if (params) {
-      Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined && v !== null) url.searchParams.set(k, String(v))
-      })
-    }
-    const res = await fetch(url.toString(), {
+  async function patch<T = any>(path: string, body?: any): Promise<T> {
+    const res = await fetch(`${base}${path}`, {
       method: 'PATCH',
-      headers: _authHeaders(),
+      headers: { ...(_authHeaders()), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(15000),
     })
     if (res.status === 401 && import.meta.client) {

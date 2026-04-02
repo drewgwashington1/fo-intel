@@ -34,14 +34,26 @@ def startup():
         # Migrate: add category column if missing (existing installs)
         from sqlalchemy import text as _t, inspect as _inspect
         insp = _inspect(engine)
-        cols = [c["name"] for c in insp.get_columns("keyword_lists")]
-        if "category" not in cols:
-            with engine.begin() as conn:
-                conn.execute(_t("ALTER TABLE keyword_lists ADD COLUMN category VARCHAR NOT NULL DEFAULT 'non-branded'"))
-                conn.execute(_t("CREATE INDEX IF NOT EXISTS ix_keyword_lists_category ON keyword_lists (category)"))
-                # Migrate old data: rows with list_name='branded' → category='branded'
-                conn.execute(_t("UPDATE keyword_lists SET category = 'branded' WHERE list_name = 'branded'"))
-            logger.info("Migrated keyword_lists: added category column")
+        if "keyword_lists" in insp.get_table_names():
+            cols = [c["name"] for c in insp.get_columns("keyword_lists")]
+            if "category" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(_t("ALTER TABLE keyword_lists ADD COLUMN category VARCHAR NOT NULL DEFAULT 'non-branded'"))
+                    conn.execute(_t("CREATE INDEX IF NOT EXISTS ix_keyword_lists_category ON keyword_lists (category)"))
+                    conn.execute(_t("UPDATE keyword_lists SET category = 'branded' WHERE list_name = 'branded'"))
+                logger.info("Migrated keyword_lists: added category column")
+
+        # Seed admin user if app_users table is empty
+        from passlib.context import CryptContext
+        _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        with engine.begin() as conn:
+            user_count = conn.execute(_t("SELECT COUNT(*) FROM app_users")).scalar()
+            if user_count == 0 and app_settings.ADMIN_EMAIL and app_settings.ADMIN_PASSWORD:
+                hashed = _pwd.hash(app_settings.ADMIN_PASSWORD)
+                conn.execute(_t(
+                    "INSERT INTO app_users (email, password_hash, role) VALUES (:email, :hash, 'admin')"
+                ), {"email": app_settings.ADMIN_EMAIL, "hash": hashed})
+                logger.info(f"Seeded admin user: {app_settings.ADMIN_EMAIL}")
     except Exception as e:
         logger.error(f"Database startup failed: {e}")
         return

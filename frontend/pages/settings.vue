@@ -75,6 +75,58 @@ async function removeCompetitor(domain: string) {
   await loadCompetitors()
 }
 
+// ── User Management ──
+const users = ref<any[]>([])
+const newUserEmail = ref('')
+const newUserPassword = ref('')
+const newUserRole = ref('viewer')
+const changingPassword = ref<Record<number, boolean>>({})
+const newPasswords = ref<Record<number, string>>({})
+
+async function loadUsers() {
+  try {
+    users.value = await get('/auth/users')
+  } catch {}
+}
+
+async function addUser() {
+  const email = newUserEmail.value.trim()
+  const password = newUserPassword.value
+  if (!email || !password) return
+  try {
+    await post('/auth/users', { email, password, role: newUserRole.value })
+    newUserEmail.value = ''
+    newUserPassword.value = ''
+    newUserRole.value = 'viewer'
+    await loadUsers()
+  } catch (e: any) {
+    alert(e.message)
+  }
+}
+
+async function deleteUser(id: number) {
+  if (!confirm('Remove this user?')) return
+  try {
+    await del(`/auth/users/${id}`)
+    await loadUsers()
+  } catch (e: any) {
+    alert(e.message)
+  }
+}
+
+async function changePassword(id: number) {
+  const pw = newPasswords.value[id]
+  if (!pw) return
+  try {
+    const { patch } = useApi()
+    await patch(`/auth/users/${id}/password`, { password: pw })
+    newPasswords.value[id] = ''
+    changingPassword.value[id] = false
+  } catch (e: any) {
+    alert(e.message)
+  }
+}
+
 // ── Cache Management ──
 const cacheClearing = ref(false)
 
@@ -89,6 +141,7 @@ async function clearCache() {
 onMounted(() => {
   loadPipelines()
   loadCompetitors()
+  loadUsers()
 })
 
 const pipelineConfig = [
@@ -227,6 +280,90 @@ function pipelineStatus(name: string) {
             class="px-4 py-2 rounded-lg text-xs font-medium bg-fo-action text-white hover:bg-fo-blue transition-colors"
             @click="addCompetitor"
           >Add</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- User Management -->
+    <div class="bg-surface-card rounded-xl border border-surface-border mb-6">
+      <div class="px-5 py-4 border-b border-surface-border">
+        <h2 class="text-sm font-semibold text-gray-900">User Management</h2>
+        <p class="text-xs text-gray-400 mt-0.5">Manage who can access this dashboard</p>
+      </div>
+      <div class="px-5 py-4">
+        <div class="space-y-2 mb-4">
+          <div v-for="u in users" :key="u.id" class="flex items-center justify-between py-2.5 px-3 rounded-lg bg-surface">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-full bg-fo-action/15 flex items-center justify-center">
+                <span class="text-fo-action text-xs font-semibold">{{ u.email.charAt(0).toUpperCase() }}</span>
+              </div>
+              <div>
+                <span class="text-sm text-gray-900 font-medium">{{ u.email }}</span>
+                <span class="text-[10px] uppercase tracking-wider text-gray-400 ml-2 px-1.5 py-0.5 rounded bg-gray-100">{{ u.role }}</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <template v-if="changingPassword[u.id]">
+                <input
+                  v-model="newPasswords[u.id]"
+                  type="password"
+                  placeholder="New password"
+                  class="w-40 px-2 py-1.5 text-xs rounded-lg border border-surface-border bg-surface focus:outline-none focus:border-fo-action"
+                  @keydown.enter="changePassword(u.id)"
+                />
+                <button
+                  class="text-xs text-fo-action hover:underline"
+                  @click="changePassword(u.id)"
+                >Save</button>
+                <button
+                  class="text-xs text-gray-400 hover:text-gray-600"
+                  @click="changingPassword[u.id] = false; newPasswords[u.id] = ''"
+                >Cancel</button>
+              </template>
+              <template v-else>
+                <button
+                  class="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                  @click="changingPassword[u.id] = true"
+                >Change password</button>
+                <button
+                  class="text-gray-400 hover:text-status-down transition-colors p-1"
+                  @click="deleteUser(u.id)"
+                  title="Remove user"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </template>
+            </div>
+          </div>
+          <div v-if="!users.length" class="text-xs text-gray-400 py-2">No users configured.</div>
+        </div>
+        <!-- Add user form -->
+        <div class="flex items-center gap-2 pt-2 border-t border-surface-border">
+          <input
+            v-model="newUserEmail"
+            type="email"
+            placeholder="Email"
+            class="flex-1 px-3 py-2 text-sm rounded-lg border border-surface-border bg-surface focus:outline-none focus:border-fo-action"
+          />
+          <input
+            v-model="newUserPassword"
+            type="password"
+            placeholder="Password"
+            class="w-40 px-3 py-2 text-sm rounded-lg border border-surface-border bg-surface focus:outline-none focus:border-fo-action"
+          />
+          <select
+            v-model="newUserRole"
+            class="px-3 py-2 text-sm rounded-lg border border-surface-border bg-surface focus:outline-none focus:border-fo-action"
+          >
+            <option value="viewer">Viewer</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button
+            class="px-4 py-2 rounded-lg text-xs font-medium bg-fo-action text-white hover:bg-fo-blue transition-colors"
+            @click="addUser"
+          >Add User</button>
         </div>
       </div>
     </div>

@@ -74,7 +74,7 @@ export const useDashboardStore = defineStore('dashboard', {
       }
     },
 
-    async fetchOrganic(brand: string = 'non-branded', tag: string = 'all', force = false) {
+    async fetchOrganic(brand: string = 'all', tag: string = 'all', force = false) {
       if (this.organicLoaded && !force) return
       const { get } = useApi()
       const days = this.periodDays
@@ -168,7 +168,7 @@ export const useDashboardStore = defineStore('dashboard', {
       this.error = null
       try {
         await Promise.allSettled([
-          this.fetchOrganic('non-branded', force),
+          this.fetchOrganic('all', 'all', force),
           this.fetchPaid(force),
           this.fetchAI(force),
           this.fetchCompetitors(force),
@@ -226,7 +226,7 @@ export const useDashboardStore = defineStore('dashboard', {
       this.error = null
       try {
         await Promise.allSettled([
-          this.fetchOrganic('non-branded', force),
+          this.fetchOrganic('all', 'all', force),
           this.fetchPaid(force),
           this.fetchAI(force),
           this.fetchCompetitors(force),
