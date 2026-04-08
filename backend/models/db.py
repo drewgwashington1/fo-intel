@@ -29,102 +29,6 @@ class OrganicPerformance(Base):
     )
 
 
-class PaidPerformance(Base):
-    __tablename__ = "paid_performance"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    data_date = Column(Date, nullable=False)
-    campaign_id = Column(BigInteger)
-    campaign_name = Column(String)
-    ad_group_id = Column(BigInteger)
-    ad_group_name = Column(String)
-    impressions = Column(Integer, default=0)
-    clicks = Column(Integer, default=0)
-    cost_micros = Column(BigInteger, default=0)
-    avg_cpc_micros = Column(BigInteger, default=0)
-    conversions = Column(Float, default=0.0)
-    impression_share = Column(Float, default=0.0)
-    lost_is_budget = Column(Float, default=0.0)
-    lost_is_rank = Column(Float, default=0.0)
-    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("ix_paid_date_campaign", "data_date", "campaign_id"),
-    )
-
-
-class SearchTerm(Base):
-    __tablename__ = "search_terms"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    data_date = Column(Date, nullable=False)
-    campaign_id = Column(BigInteger)
-    search_term = Column(String)
-    match_type = Column(String)
-    impressions = Column(Integer, default=0)
-    clicks = Column(Integer, default=0)
-    cost_micros = Column(BigInteger, default=0)
-    conversions = Column(Float, default=0.0)
-    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("ix_search_terms_date", "data_date"),
-    )
-
-
-class AIVisibility(Base):
-    __tablename__ = "ai_visibility"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    data_date = Column(Date, nullable=False)
-    category_id = Column(String)
-    category_name = Column(String)
-    platform = Column(String)
-    visibility_score = Column(Float, default=0.0)
-    share_of_voice = Column(Float, default=0.0)
-    citation_count = Column(Integer, default=0)
-    average_position = Column(Float, default=0.0)
-    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("ix_ai_vis_date_platform", "data_date", "platform"),
-    )
-
-
-class AICitation(Base):
-    __tablename__ = "ai_citations"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    data_date = Column(Date, nullable=False)
-    prompt = Column(String)
-    platform = Column(String)
-    cited_url = Column(String)
-    citation_type = Column(String)
-    sentiment = Column(String)
-    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("ix_ai_citations_date", "data_date"),
-    )
-
-
-class AICompetitor(Base):
-    __tablename__ = "ai_competitors"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    data_date = Column(Date, nullable=False)
-    category_name = Column(String)
-    platform = Column(String)
-    competitor_domain = Column(String)
-    share_of_voice = Column(Float, default=0.0)
-    citation_count = Column(Integer, default=0)
-    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("ix_ai_comp_date", "data_date", "competitor_domain"),
-    )
-
-
 class CompetitorAd(Base):
     __tablename__ = "competitor_ads"
 
@@ -171,39 +75,42 @@ class KeywordList(Base):
     )
 
 
-class AdCreativePerformance(Base):
-    """Daily ad creative performance from Google Ads API."""
-    __tablename__ = "ad_creative_performance"
+class KeywordMetrics(Base):
+    """Keyword Planner data — search volume, CPC, competition per keyword."""
+    __tablename__ = "keyword_metrics"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    data_date = Column(Date, nullable=False)
-    campaign_id = Column(BigInteger)
-    campaign_name = Column(String)
-    ad_group_id = Column(BigInteger)
-    ad_group_name = Column(String)
-    ad_id = Column(BigInteger)
-    ad_type = Column(String)  # RESPONSIVE_SEARCH_AD, EXPANDED_TEXT_AD, etc.
-    headline_1 = Column(String)
-    headline_2 = Column(String)
-    headline_3 = Column(String)
-    description_1 = Column(String)
-    description_2 = Column(String)
-    final_url = Column(String)
-    image_url = Column(String, nullable=True)
-    campaign_type = Column(String, nullable=True)  # SEARCH, DEMAND_GEN, PERFORMANCE_MAX
-    impressions = Column(Integer, default=0)
-    clicks = Column(Integer, default=0)
-    cost_micros = Column(BigInteger, default=0)
-    conversions = Column(Float, default=0.0)
-    conversion_value = Column(Float, default=0.0)
-    ctr = Column(Float, default=0.0)
-    avg_cpc_micros = Column(BigInteger, default=0)
-    inserted_at = Column(DateTime(timezone=True), server_default=func.now())
+    keyword = Column(String, nullable=False, unique=True)
+    avg_monthly_searches = Column(Integer, default=0)
+    competition = Column(String)  # LOW, MEDIUM, HIGH
+    competition_index = Column(Float, default=0)  # 0-100
+    low_cpc_micros = Column(BigInteger, default=0)
+    high_cpc_micros = Column(BigInteger, default=0)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
-        Index("ix_ad_creative_date", "data_date"),
-        Index("ix_ad_creative_ad_id", "data_date", "ad_id"),
-        Index("ix_ad_creative_campaign", "data_date", "campaign_id"),
+        Index("ix_kw_metrics_keyword", "keyword"),
+        Index("ix_kw_metrics_volume", "avg_monthly_searches"),
+    )
+
+
+class KeywordIdea(Base):
+    """Related keyword suggestions from Keyword Planner."""
+    __tablename__ = "keyword_ideas"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    seed_keyword = Column(String, nullable=False)
+    suggested_keyword = Column(String, nullable=False)
+    avg_monthly_searches = Column(Integer, default=0)
+    competition = Column(String)
+    competition_index = Column(Float, default=0)
+    low_cpc_micros = Column(BigInteger, default=0)
+    high_cpc_micros = Column(BigInteger, default=0)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_kw_ideas_seed", "seed_keyword"),
+        Index("ix_kw_ideas_suggested", "suggested_keyword"),
     )
 
 

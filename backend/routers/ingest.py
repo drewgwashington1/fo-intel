@@ -7,21 +7,9 @@ from sqlalchemy import text
 
 from config import app_settings
 from database import get_db, get_db_session
-from models.db import (
-    OrganicPerformance, PaidPerformance, SearchTerm,
-    AIVisibility, AICitation, AICompetitor, CompetitorAd,
-    AdCreativePerformance,
-)
+from models.db import OrganicPerformance, CompetitorAd
 from services.mock_gsc import generate_gsc_data
 from services.gsc import fetch_gsc_data
-from services.mock_ads import generate_paid_data, generate_search_terms_data, generate_ad_creative_data
-from services.google_ads import fetch_paid_data, fetch_search_terms_data, fetch_ad_creative_data
-from services.mock_profound import (
-    generate_ai_visibility, generate_ai_citations, generate_ai_competitors,
-)
-from services.profound import (
-    fetch_ai_visibility, fetch_ai_citations, fetch_ai_competitors,
-)
 from services.mock_transparency import generate_competitor_ads
 from services.transparency import fetch_all_competitor_ads
 from services.serper import run_serper_sweep
@@ -90,110 +78,6 @@ def ingest_gsc(days: int = Query(30, ge=1, le=365), background_tasks: Background
     return {"pipeline": "gsc", "source": source, "days": days, "rows_inserted": inserted, "days_skipped": skipped}
 
 
-@router.post("/ads")
-def ingest_ads(days: int = Query(30, ge=1, le=365), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
-    today = date.today()
-    existing_paid = _dates_with_data(db, "paid_performance", days)
-    existing_terms = _dates_with_data(db, "search_terms", days)
-    inserted = 0
-    skipped = 0
-    source = "mock" if app_settings.USE_MOCK_ADS else "google_ads_api"
-
-    for i in range(days):
-        target = today - timedelta(days=i + 1)
-        day_skipped = True
-        if target not in existing_paid:
-            day_skipped = False
-            if app_settings.USE_MOCK_ADS:
-                rows = generate_paid_data(target)
-            else:
-                rows = fetch_paid_data(target)
-            for r in rows:
-                db.add(PaidPerformance(**r))
-            inserted += len(rows)
-        if target not in existing_terms:
-            day_skipped = False
-            if app_settings.USE_MOCK_ADS:
-                rows = generate_search_terms_data(target)
-            else:
-                rows = fetch_search_terms_data(target)
-            for r in rows:
-                db.add(SearchTerm(**r))
-            inserted += len(rows)
-        if day_skipped:
-            skipped += 1
-
-    db.commit()
-    if background_tasks and inserted > 0:
-        background_tasks.add_task(_rebuild_scope_in_background, "paid", "ads", inserted)
-    return {"pipeline": "ads", "source": source, "days": days, "rows_inserted": inserted, "days_skipped": skipped}
-
-
-@router.post("/profound")
-def ingest_profound(days: int = Query(30, ge=1, le=365), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
-    today = date.today()
-    existing_vis = _dates_with_data(db, "ai_visibility", days)
-    inserted = 0
-    skipped = 0
-    source = "mock" if app_settings.USE_MOCK_PROFOUND else "profound_api"
-
-    for i in range(days):
-        target = today - timedelta(days=i + 1)
-        if target in existing_vis:
-            skipped += 1
-            continue
-
-        if app_settings.USE_MOCK_PROFOUND:
-            vis_rows = generate_ai_visibility(target)
-            cit_rows = generate_ai_citations(target)
-            comp_rows = generate_ai_competitors(target)
-        else:
-            vis_rows = fetch_ai_visibility(target)
-            cit_rows = fetch_ai_citations(target)
-            comp_rows = fetch_ai_competitors(target)
-
-        for r in vis_rows:
-            db.add(AIVisibility(**r))
-        for r in cit_rows:
-            db.add(AICitation(**r))
-        for r in comp_rows:
-            db.add(AICompetitor(**r))
-        inserted += 1
-
-    db.commit()
-    if background_tasks and inserted > 0:
-        background_tasks.add_task(_rebuild_scope_in_background, "ai", "profound", inserted)
-    return {"pipeline": "profound", "source": source, "days_processed": inserted, "days_skipped": skipped}
-
-
-@router.post("/creatives")
-def ingest_creatives(days: int = Query(30, ge=1, le=365), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
-    """Ingest ad creative performance data from Google Ads API."""
-    today = date.today()
-    existing = _dates_with_data(db, "ad_creative_performance", days)
-    inserted = 0
-    source = "mock" if app_settings.USE_MOCK_ADS else "google_ads_api"
-
-    for i in range(days):
-        target = today - timedelta(days=i + 1)
-        if target in existing:
-            continue
-
-        if app_settings.USE_MOCK_ADS:
-            rows = generate_ad_creative_data(target)
-        else:
-            rows = fetch_ad_creative_data(target)
-
-        for r in rows:
-            db.add(AdCreativePerformance(**r))
-        inserted += len(rows)
-
-    db.commit()
-    if background_tasks and inserted > 0:
-        background_tasks.add_task(_rebuild_scope_in_background, "creatives", "creatives", inserted)
-    return {"pipeline": "creatives", "source": source, "days": days, "rows_inserted": inserted}
-
-
 @router.post("/transparency")
 def ingest_transparency(background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
     """Scrape competitor ads from Google Ads Transparency Center.
@@ -235,6 +119,89 @@ def ingest_transparency(background_tasks: BackgroundTasks = None, db: Session = 
         "ads_inserted": inserted,
         "ads_updated": updated,
         "total_scraped": len(rows),
+    }
+
+
+@router.post("/keyword-planner")
+def ingest_keyword_planner(background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
+    """Fetch keyword metrics from Google Ads Keyword Planner.
+
+    Pulls all unique queries from organic_performance, fetches volume/CPC/competition
+    from Keyword Planner API, and upserts into keyword_metrics table.
+    Also backfills estimated_volume/cpc/competition on paid_keyword_observations.
+    """
+    from datetime import datetime, timezone
+    from services.keyword_planner import fetch_keyword_metrics
+    from models.db import KeywordMetrics
+
+    # Get all unique keywords from GSC data (last 90 days)
+    rows = db.execute(text("""
+        SELECT DISTINCT query FROM organic_performance
+        WHERE data_date >= CURRENT_DATE - INTERVAL '90 days'
+          AND query IS NOT NULL AND query != ''
+        ORDER BY query
+    """)).all()
+    keywords = [r[0] for r in rows]
+
+    if not keywords:
+        return {"pipeline": "keyword_planner", "status": "no_keywords", "keywords_processed": 0}
+
+    # Fetch metrics from Keyword Planner API
+    try:
+        metrics = fetch_keyword_metrics(keywords)
+    except Exception as e:
+        import logging
+        logging.error(f"Keyword Planner API failed: {e}")
+        return {"pipeline": "keyword_planner", "status": "api_error", "error": str(e), "keywords_submitted": len(keywords)}
+
+    if not metrics:
+        return {"pipeline": "keyword_planner", "status": "no_results", "keywords_submitted": len(keywords), "metrics_returned": 0}
+
+    # Upsert into keyword_metrics
+    upserted = 0
+    now = datetime.now(timezone.utc)
+    for m in metrics:
+        existing = db.query(KeywordMetrics).filter(KeywordMetrics.keyword == m["keyword"]).first()
+        if existing:
+            existing.avg_monthly_searches = m["avg_monthly_searches"]
+            existing.competition = m["competition"]
+            existing.competition_index = m["competition_index"]
+            existing.low_cpc_micros = m["low_cpc_micros"]
+            existing.high_cpc_micros = m["high_cpc_micros"]
+            existing.updated_at = now
+        else:
+            db.add(KeywordMetrics(**m))
+        upserted += 1
+
+    db.commit()
+
+    # Backfill paid_keyword_observations with volume/CPC data
+    backfilled = 0
+    try:
+        backfilled = db.execute(text("""
+            UPDATE paid_keyword_observations pko
+            SET estimated_volume = km.avg_monthly_searches,
+                estimated_cpc = km.high_cpc_micros / 1000000.0,
+                competition_level = km.competition
+            FROM keyword_metrics km
+            WHERE pko.keyword = km.keyword
+              AND (pko.estimated_volume IS NULL OR pko.estimated_volume = 0)
+        """)).rowcount
+        db.commit()
+    except Exception:
+        pass
+
+    if background_tasks:
+        background_tasks.add_task(
+            _rebuild_scope_in_background, "keywords", "keyword_planner", upserted
+        )
+
+    return {
+        "pipeline": "keyword_planner",
+        "keywords_submitted": len(keywords),
+        "metrics_returned": len(metrics),
+        "upserted": upserted,
+        "observations_backfilled": backfilled,
     }
 
 
@@ -298,12 +265,6 @@ def refresh_data(background_tasks: BackgroundTasks, db: Session = Depends(get_db
                 try:
                     if pipeline == "gsc":
                         ingest_gsc(days=30, db=bg_db)
-                    elif pipeline == "ads":
-                        ingest_ads(days=30, db=bg_db)
-                    elif pipeline == "creatives":
-                        ingest_creatives(days=30, db=bg_db)
-                    elif pipeline == "profound":
-                        ingest_profound(days=30, db=bg_db)
                     elif pipeline == "transparency":
                         ingest_transparency(db=bg_db)
                 except Exception as e:

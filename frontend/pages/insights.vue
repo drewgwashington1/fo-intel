@@ -10,8 +10,6 @@ const periodOptions = [
 const categories = [
   { key: 'all', label: 'All' },
   { key: 'organic', label: 'Organic' },
-  { key: 'paid', label: 'Paid' },
-  { key: 'ai_visibility', label: 'AI Visibility' },
 ]
 
 const priorities = ['all', 'high', 'medium', 'low'] as const
@@ -58,10 +56,6 @@ function priorityCount(key: string): number {
 function categoryColor(cat: string): string {
   const map: Record<string, string> = {
     organic: 'bg-status-up/15 text-status-up',
-    paid: 'bg-fo-action/15 text-fo-action',
-    ai_visibility: 'bg-purple-500/15 text-purple-600',
-    competitor: 'bg-status-down/15 text-status-down',
-    cross_channel: 'bg-amber/15 text-amber',
   }
   return map[cat] || 'bg-gray-500/15 text-gray-400'
 }
@@ -69,10 +63,6 @@ function categoryColor(cat: string): string {
 function categoryLabel(cat: string): string {
   const map: Record<string, string> = {
     organic: 'Organic',
-    paid: 'Paid',
-    ai_visibility: 'AI Visibility',
-    competitor: 'Competitor',
-    cross_channel: 'Cross-Channel',
   }
   return map[cat] || cat
 }

@@ -16,14 +16,8 @@ from services.summaries import (
     build_organic_overview, build_organic_timeline, build_organic_top_queries,
     build_organic_position_dist, build_organic_movements, build_organic_top_pages,
     build_organic_devices, build_organic_countries, build_organic_competitors,
-    build_paid_overview, build_paid_campaigns, build_paid_search_terms,
-    build_paid_timeline, build_paid_is_loss, build_paid_pages, build_paid_ads, build_paid_ad_formats,
-    build_ai_overview, build_ai_platforms, build_ai_competitors, build_ai_sov_comparison,
-    build_ai_top_cited, build_ai_timeline,
     build_competitors_overview, build_competitors_by_domain, build_competitors_longest_running,
     build_competitors_new_this_week, build_competitors_formats,
-    build_creatives_overview, build_creatives_performance, build_creatives_timeline,
-    build_creatives_by_campaign, build_creatives_top_headlines,
 )
 
 router = APIRouter()
@@ -333,195 +327,6 @@ def organic_export(days: int = Query(30), db: Session = Depends(get_db)):
     return _csv_response([dict(r) for r in rows], f"organic_export_{days}d.csv")
 
 
-# ── Paid Performance ─────────────────────────────────────────────
-
-@router.get("/paid/overview")
-def paid_overview(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"paid_overview:{days}", build_paid_overview, days)
-
-
-@router.get("/paid/campaigns")
-def paid_campaigns(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"paid_campaigns:{days}", build_paid_campaigns, days)
-
-
-@router.get("/paid/search-terms")
-def paid_search_terms(days: int = Query(30), limit: int = Query(25), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"paid_search_terms:{days}:{limit}", build_paid_search_terms, days, limit)
-
-
-@router.get("/paid/ads")
-def paid_ads(db: Session = Depends(get_db)):
-    return _cached_or_build(db, "paid_ads", build_paid_ads)
-
-
-@router.get("/paid/timeline")
-def paid_timeline(days: int = Query(90), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"paid_timeline:{days}", build_paid_timeline, days)
-
-
-@router.get("/paid/is-loss")
-def paid_is_loss(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"paid_is_loss:{days}", build_paid_is_loss, days)
-
-
-@router.get("/paid/pages")
-def paid_pages(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"paid_pages:{days}", build_paid_pages, days)
-
-
-@router.get("/paid/ad-formats")
-def paid_ad_formats(db: Session = Depends(get_db)):
-    return _cached_or_build(db, "paid_ad_formats", build_paid_ad_formats)
-
-
-@router.get("/paid/export")
-def paid_export(days: int = Query(30), db: Session = Depends(get_db)):
-    start = _period(days)
-    rows = db.execute(text("""
-        SELECT data_date, campaign_name, ad_group_name, impressions, clicks,
-               cost_micros / 1000000.0 AS spend, conversions, impression_share, lost_is_budget, lost_is_rank
-        FROM paid_performance WHERE data_date >= :start ORDER BY data_date DESC
-    """), {"start": start}).mappings().all()
-    return _csv_response([dict(r) for r in rows], f"paid_export_{days}d.csv")
-
-
-# ── AI Visibility ────────────────────────────────────────────────
-
-@router.get("/ai/overview")
-def ai_overview(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"ai_overview:{days}", build_ai_overview, days)
-
-
-@router.get("/ai/platforms")
-def ai_platforms(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"ai_platforms:{days}", build_ai_platforms, days)
-
-
-@router.get("/ai/competitors")
-def ai_competitors(days: int = Query(30), limit: int = Query(15), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"ai_competitors:{days}:{limit}", build_ai_competitors, days, limit)
-
-
-@router.get("/ai/sov-comparison")
-def ai_sov_comparison(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"ai_sov_comparison:{days}", build_ai_sov_comparison, days)
-
-
-@router.get("/ai/top-cited")
-def ai_top_cited(days: int = Query(30), limit: int = Query(10), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"ai_top_cited:{days}:{limit}", build_ai_top_cited, days, limit)
-
-
-@router.get("/ai/timeline")
-def ai_timeline(days: int = Query(60), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"ai_timeline:{days}", build_ai_timeline, days)
-
-
-@router.get("/ai/citation-timeline")
-def ai_citation_timeline(days: int = Query(30), db: Session = Depends(get_db)):
-    start = _period(days)
-    rows = db.execute(text("""
-        SELECT data_date, COUNT(*) AS citations,
-               SUM(CASE WHEN citation_type = 'DIRECT' THEN 1 ELSE 0 END) AS direct,
-               SUM(CASE WHEN citation_type = 'INDIRECT' THEN 1 ELSE 0 END) AS indirect,
-               SUM(CASE WHEN citation_type = 'MENTION' THEN 1 ELSE 0 END) AS mention
-        FROM ai_citations WHERE data_date >= :start
-        GROUP BY data_date ORDER BY data_date
-    """), {"start": start}).mappings().all()
-    return [dict(r) for r in rows]
-
-
-@router.get("/ai/topics")
-def ai_topics(days: int = Query(30)):
-    from config import app_settings
-    import requests as req
-    start = _period(days).isoformat()
-    end = date.today().isoformat()
-    try:
-        resp = req.post(
-            "https://api.tryprofound.com/v1/reports/visibility",
-            headers={"X-API-Key": app_settings.PROFOUND_API_KEY, "Content-Type": "application/json"},
-            json={
-                "category_id": app_settings.PROFOUND_CATEGORY_ID,
-                "start_date": start, "end_date": end,
-                "metrics": ["visibility_score", "share_of_voice"],
-                "dimensions": ["topic"],
-                "filters": [{"field": "asset_name", "operator": "is", "value": "First Orion"}],
-                "pagination": {"limit": 30},
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return [
-            {"topic": item["dimensions"][0],
-             "visibility": round(item["metrics"][1] * 100, 1) if item["metrics"][1] <= 1 else round(item["metrics"][1], 1),
-             "sov": round(item["metrics"][0] * 100, 1)}
-            for item in resp.json().get("data", [])
-        ]
-    except Exception:
-        return []
-
-
-@router.get("/ai/prompts")
-def ai_prompts(days: int = Query(30)):
-    from config import app_settings
-    import requests as req
-    start = _period(days).isoformat()
-    end = date.today().isoformat()
-    try:
-        resp = req.post(
-            "https://api.tryprofound.com/v1/reports/visibility",
-            headers={"X-API-Key": app_settings.PROFOUND_API_KEY, "Content-Type": "application/json"},
-            json={
-                "category_id": app_settings.PROFOUND_CATEGORY_ID,
-                "start_date": start, "end_date": end,
-                "metrics": ["visibility_score", "share_of_voice"],
-                "dimensions": ["prompt"],
-                "filters": [{"field": "asset_name", "operator": "is", "value": "First Orion"}],
-                "pagination": {"limit": 30},
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return [
-            {"prompt": item["dimensions"][0],
-             "visibility": round(item["metrics"][1] * 100, 1) if item["metrics"][1] <= 1 else round(item["metrics"][1], 1),
-             "sov": round(item["metrics"][0] * 100, 1)}
-            for item in resp.json().get("data", [])
-        ]
-    except Exception:
-        return []
-
-
-@router.get("/ai/cited-urls")
-def ai_cited_urls(days: int = Query(30)):
-    from config import app_settings
-    import requests as req
-    start = _period(days).isoformat()
-    end = date.today().isoformat()
-    try:
-        resp = req.post(
-            "https://api.tryprofound.com/v1/reports/citations",
-            headers={"X-API-Key": app_settings.PROFOUND_API_KEY, "Content-Type": "application/json"},
-            json={
-                "category_id": app_settings.PROFOUND_CATEGORY_ID,
-                "start_date": start, "end_date": end,
-                "metrics": ["count"],
-                "dimensions": ["url"],
-                "pagination": {"limit": 30},
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return [
-            {"url": item["dimensions"][0], "citations": item["metrics"][0]}
-            for item in resp.json().get("data", [])
-        ]
-    except Exception:
-        return []
-
-
 # ── Competitor Ads ───────────────────────────────────────────────
 
 @router.get("/competitors/overview")
@@ -549,31 +354,202 @@ def competitors_formats(db: Session = Depends(get_db)):
     return _cached_or_build(db, "competitors_formats", build_competitors_formats)
 
 
-# ── Creatives ────────────────────────────────────────────────────
+# ── Keywords Explorer ────────────────────────────────────────────
 
-@router.get("/creatives/overview")
-def creatives_overview(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"creatives_overview:{days}", build_creatives_overview, days)
+@router.get("/keywords/overview")
+def keywords_overview(days: int = Query(30), db: Session = Depends(get_db)):
+    """Summary stats for keyword metrics."""
+    start = _period(days)
+    row = db.execute(text("""
+        SELECT COUNT(DISTINCT km.keyword) AS total_keywords,
+               ROUND(AVG(km.avg_monthly_searches)) AS avg_volume,
+               COUNT(DISTINCT km.keyword) FILTER (WHERE km.competition = 'HIGH') AS high_competition,
+               COUNT(DISTINCT km.keyword) FILTER (WHERE km.competition = 'LOW') AS low_competition,
+               ROUND(AVG(km.high_cpc_micros / 1000000.0)::numeric, 2) AS avg_cpc
+        FROM keyword_metrics km
+        INNER JOIN (
+            SELECT DISTINCT query FROM organic_performance
+            WHERE data_date >= :start
+              AND LENGTH(query) >= 3
+              AND query !~ '^[0-9\\s\\-\\(\\)\\+\\.]+$'
+        ) op ON km.keyword = op.query
+        WHERE km.avg_monthly_searches > 0
+    """), {"start": start}).mappings().first()
+    return dict(row) if row else {}
 
 
-@router.get("/creatives/performance")
-def creatives_performance(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"creatives_performance:{days}", build_creatives_performance, days)
+@router.get("/keywords/list")
+def keywords_list(
+    days: int = Query(30),
+    limit: int = Query(100),
+    sort: str = Query("volume"),
+    brand: str = Query(None),
+    tag: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Keyword list with volume, competition, CPC, and GSC performance."""
+    start = _period(days)
+
+    # Build optional brand/tag filter
+    brand_filter = ""
+    if brand and brand != "all":
+        if brand == "branded":
+            brand_filter = "AND op.query IN (SELECT LOWER(term) FROM keyword_lists WHERE category = 'branded')"
+        elif brand == "non-branded":
+            brand_filter = "AND op.query NOT IN (SELECT LOWER(term) FROM keyword_lists WHERE category = 'branded')"
+
+    tag_filter = ""
+    if tag and tag != "all":
+        tag_filter = f"AND op.query IN (SELECT LOWER(kqm.query) FROM keyword_query_map kqm WHERE kqm.keyword_list_name = '{tag}')"
+
+    sort_col = {
+        "volume": "COALESCE(km.avg_monthly_searches, 0) DESC",
+        "clicks": "clicks DESC",
+        "impressions": "impressions DESC",
+        "position": "avg_position ASC",
+        "cpc": "COALESCE(km.high_cpc_micros, 0) DESC",
+        "competition": "COALESCE(km.competition_index, 0) DESC",
+    }.get(sort, "COALESCE(km.avg_monthly_searches, 0) DESC")
+
+    rows = db.execute(text(f"""
+        SELECT op.query AS keyword,
+               COALESCE(km.avg_monthly_searches, 0) AS volume,
+               km.competition,
+               COALESCE(km.competition_index, 0) AS competition_index,
+               ROUND(COALESCE(km.low_cpc_micros, 0) / 1000000.0, 2) AS low_cpc,
+               ROUND(COALESCE(km.high_cpc_micros, 0) / 1000000.0, 2) AS high_cpc,
+               SUM(op.clicks) AS clicks,
+               SUM(op.impressions) AS impressions,
+               CASE WHEN SUM(op.impressions) > 0
+                    THEN ROUND(SUM(op.clicks)::numeric / SUM(op.impressions), 4) ELSE 0 END AS ctr,
+               CASE WHEN SUM(op.impressions) > 0
+                    THEN ROUND((SUM(op.position * op.impressions) / SUM(op.impressions))::numeric, 0) ELSE 0 END AS avg_position,
+               (ARRAY_AGG(op.page ORDER BY op.clicks DESC))[1] AS top_page
+        FROM organic_performance op
+        LEFT JOIN keyword_metrics km ON km.keyword = op.query
+        WHERE op.data_date >= :start
+          AND LENGTH(op.query) >= 3
+          AND op.query !~ '^[0-9\\s\\-\\(\\)\\+\\.]+$'
+          AND op.query !~ '^\\d{{7,}}$'
+          {brand_filter} {tag_filter}
+        GROUP BY op.query, km.avg_monthly_searches, km.competition, km.competition_index,
+                 km.low_cpc_micros, km.high_cpc_micros
+        HAVING COALESCE(km.avg_monthly_searches, 0) > 0 OR SUM(op.impressions) >= 10
+        ORDER BY {sort_col}
+        LIMIT :lim
+    """), {"start": start, "lim": limit}).mappings().all()
+    return [dict(r) for r in rows]
 
 
-@router.get("/creatives/timeline")
-def creatives_timeline(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"creatives_timeline:{days}", build_creatives_timeline, days)
+@router.get("/keywords/ideas")
+def keywords_ideas(seeds: str = Query(""), limit: int = Query(50), db: Session = Depends(get_db)):
+    """Get keyword ideas from Keyword Planner based on seed keywords.
+
+    Seeds can be comma-separated. If empty, uses top 5 GSC keywords by clicks.
+    """
+    from services.keyword_planner import fetch_keyword_ideas
+    from models.db import KeywordIdea
+
+    if seeds:
+        seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
+    else:
+        # Use high-volume non-branded keywords as seeds
+        rows = db.execute(text("""
+            SELECT km.keyword
+            FROM keyword_metrics km
+            INNER JOIN (
+                SELECT DISTINCT query FROM organic_performance
+                WHERE data_date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND query IS NOT NULL AND query != ''
+            ) op ON km.keyword = op.query
+            WHERE km.avg_monthly_searches > 0
+              AND LOWER(km.keyword) NOT IN (
+                  SELECT LOWER(term) FROM keyword_lists WHERE category = 'branded'
+              )
+            ORDER BY km.avg_monthly_searches DESC
+            LIMIT 10
+        """)).all()
+        seed_list = [r[0] for r in rows]
+
+    if not seed_list:
+        return []
+
+    # Check cache first (ideas fetched in last 7 days)
+    cached = db.execute(text("""
+        SELECT suggested_keyword AS keyword, avg_monthly_searches AS volume,
+               competition, competition_index,
+               ROUND(low_cpc_micros / 1000000.0, 2) AS low_cpc,
+               ROUND(high_cpc_micros / 1000000.0, 2) AS high_cpc,
+               seed_keyword
+        FROM keyword_ideas
+        WHERE seed_keyword IN :seeds
+          AND fetched_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+        ORDER BY avg_monthly_searches DESC LIMIT :lim
+    """), {"seeds": tuple(seed_list), "lim": limit}).mappings().all()
+
+    if cached:
+        return [dict(r) for r in cached]
+
+    # Fetch fresh from API
+    ideas = fetch_keyword_ideas(seed_list, limit)
+
+    # Cache results
+    for idea in ideas:
+        db.add(KeywordIdea(
+            seed_keyword=seed_list[0],
+            suggested_keyword=idea["keyword"],
+            avg_monthly_searches=idea["avg_monthly_searches"],
+            competition=idea["competition"],
+            competition_index=idea["competition_index"],
+            low_cpc_micros=idea["low_cpc_micros"],
+            high_cpc_micros=idea["high_cpc_micros"],
+        ))
+    db.commit()
+
+    return [{
+        "keyword": i["keyword"],
+        "volume": i["avg_monthly_searches"],
+        "competition": i["competition"],
+        "competition_index": i["competition_index"],
+        "low_cpc": round(i["low_cpc_micros"] / 1_000_000, 2),
+        "high_cpc": round(i["high_cpc_micros"] / 1_000_000, 2),
+        "seed_keyword": seed_list[0],
+    } for i in ideas]
 
 
-@router.get("/creatives/by-campaign")
-def creatives_by_campaign(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"creatives_by_campaign:{days}", build_creatives_by_campaign, days)
+@router.get("/keywords/gaps")
+def keywords_gaps(days: int = Query(90), limit: int = Query(50), db: Session = Depends(get_db)):
+    """Content gaps: keywords competitors rank for but FO doesn't.
 
-
-@router.get("/creatives/top-headlines")
-def creatives_top_headlines(days: int = Query(30), db: Session = Depends(get_db)):
-    return _cached_or_build(db, f"creatives_top_headlines:{days}", build_creatives_top_headlines, days)
+    Uses Serper organic_serp_results (competitor rankings) vs GSC (FO rankings).
+    Enriched with Keyword Planner volume/CPC when available.
+    """
+    start = _period(days)
+    rows = db.execute(text("""
+        SELECT osr.keyword,
+               COUNT(DISTINCT osr.domain) AS competitor_count,
+               MIN(osr.position) AS best_competitor_position,
+               ARRAY_AGG(DISTINCT osr.domain ORDER BY osr.domain) AS competitor_domains,
+               COALESCE(km.avg_monthly_searches, 0) AS volume,
+               km.competition,
+               ROUND(COALESCE(km.high_cpc_micros, 0) / 1000000.0, 2) AS cpc
+        FROM organic_serp_results osr
+        LEFT JOIN keyword_metrics km ON km.keyword = osr.keyword
+        WHERE osr.observed_date >= :start
+          AND osr.domain != 'firstorion.com'
+          AND osr.keyword NOT IN (
+              SELECT DISTINCT query FROM organic_performance
+              WHERE data_date >= :start
+          )
+          AND LOWER(osr.keyword) NOT IN (
+              SELECT LOWER(term) FROM keyword_lists WHERE category = 'branded'
+          )
+        GROUP BY osr.keyword, km.avg_monthly_searches, km.competition, km.high_cpc_micros
+        HAVING COUNT(DISTINCT osr.domain) >= 1
+        ORDER BY COALESCE(km.avg_monthly_searches, 0) DESC, COUNT(DISTINCT osr.domain) DESC
+        LIMIT :lim
+    """), {"start": start, "lim": limit}).mappings().all()
+    return [dict(r) for r in rows]
 
 
 # ── Insights (reads from summary_cache) ──────────────────────────

@@ -3,8 +3,8 @@
 Every insight answers: "What specific content should FO create, expand, or refresh?"
 No SEO tactics. No vague generalizations. Content opportunities only.
 
-Categories: organic (4), paid (3), ai_visibility (3)
-Competitor and cross-channel removed — data visible in Paid > Competitor Ads tab.
+Categories: organic (4)
+Paid and AI visibility removed — out of scope.
 """
 from __future__ import annotations
 
@@ -65,11 +65,6 @@ def _branded_exclusion(col: str = "query") -> str:
     )
 
 
-def _branded_exclusion_st() -> str:
-    """Same but for search_terms table (column is search_term, not query)."""
-    return _branded_exclusion("search_term")
-
-
 def _url_exclusion(col: str = "page") -> str:
     """SQL fragment to exclude internal/non-website URLs."""
     clauses = " AND ".join([f"{col} NOT LIKE '%{u}%'" for u in _EXCLUDED_URL_PATTERNS])
@@ -82,7 +77,6 @@ def _compute_insights(days: int, db: Session):
     start = _period(days)
     prev_start, prev_end = _prev_period(days)
     bf = _branded_exclusion()
-    bf_st = _branded_exclusion_st()
     insights = []
 
     # ═══════════════════════════════════════════════════════════════
@@ -223,209 +217,6 @@ def _compute_insights(days: int, db: Session):
         pass  # paid_keyword_observations may be empty
 
     # ═══════════════════════════════════════════════════════════════
-    # PAID — 3 types, opportunity-focused
-    # ═══════════════════════════════════════════════════════════════
-
-    # ── 5. Top Converting Search Terms ──────────────────────────
-    # Surface which search terms actually drive conversions — content topic signals
-    rows = db.execute(text(f"""
-        SELECT search_term, SUM(clicks) AS clicks, SUM(conversions) AS conversions,
-               SUM(impressions) AS impressions,
-               CASE WHEN SUM(clicks) > 0
-                    THEN ROUND(SUM(conversions)::numeric / SUM(clicks) * 100, 1)
-                    ELSE 0 END AS conv_rate,
-               CASE WHEN SUM(conversions) > 0
-                    THEN ROUND((SUM(cost_micros) / 1000000.0 / SUM(conversions))::numeric, 2)
-                    ELSE 0 END AS cost_per_conv
-        FROM search_terms WHERE data_date >= :start {bf_st}
-        GROUP BY search_term
-        HAVING SUM(conversions) > 0
-        ORDER BY SUM(conversions) DESC LIMIT 10
-    """), {"start": start}).mappings().all()
-
-    for r in rows:
-        conv = float(r["conversions"])
-        rate = float(r["conv_rate"])
-        insights.append({
-            "id": f"converting_{len(insights)}",
-            "type": "top_converting",
-            "category": "paid",
-            "priority": "high" if conv >= 5 else "medium" if conv >= 2 else "low",
-            "title": f'Top converter: "{r["search_term"]}"',
-            "description": f'{conv:.0f} conversions at {rate}% conversion rate ({r["clicks"]:,} clicks).',
-            "metric": {"conversions": conv, "conv_rate": rate, "clicks": r["clicks"], "cost_per_conversion": float(r["cost_per_conv"])},
-            "action": f'"{r["search_term"]}" converts at {rate}% — this topic resonates. Build organic content around this theme to capture traffic without ad spend.',
-            "affected_entity": r["search_term"],
-            "source": "Google Ads search terms",
-        })
-
-    # ── 6. High-Traffic Zero-Conversion Terms ───────────────────
-    # Terms getting clicks but no conversions — content mismatch or negative keyword candidates
-    rows = db.execute(text(f"""
-        SELECT search_term, SUM(clicks) AS clicks,
-               SUM(cost_micros) / 1000000.0 AS cost,
-               SUM(impressions) AS impressions
-        FROM search_terms WHERE data_date >= :start {bf_st}
-        GROUP BY search_term
-        HAVING SUM(conversions) = 0 AND SUM(clicks) >= 10
-        ORDER BY SUM(clicks) DESC LIMIT 10
-    """), {"start": start}).mappings().all()
-
-    for r in rows:
-        insights.append({
-            "id": f"nonconv_{len(insights)}",
-            "type": "zero_conversion",
-            "category": "paid",
-            "priority": "medium" if r["clicks"] >= 25 else "low",
-            "title": f'No conversions: "{r["search_term"]}" ({r["clicks"]:,} clicks)',
-            "description": f'{r["clicks"]:,} clicks, {r["impressions"]:,} impressions, $0 return. Landing page may not match search intent.',
-            "metric": {"clicks": r["clicks"], "cost": float(r["cost"]), "impressions": r["impressions"]},
-            "action": f'"{r["search_term"]}" gets traffic but no conversions. Check if the landing page matches search intent, or add as a negative keyword to save budget.',
-            "affected_entity": r["search_term"],
-            "source": "Google Ads search terms",
-        })
-
-    # ── 7. Campaign Efficiency Comparison ───────────────────────
-    # Compare conversion rates across campaigns to find underperformers
-    rows = db.execute(text("""
-        SELECT campaign_name,
-               SUM(clicks) AS clicks, SUM(impressions) AS impressions,
-               SUM(conversions) AS conversions,
-               CASE WHEN SUM(clicks) > 0
-                    THEN ROUND(SUM(conversions)::numeric / SUM(clicks) * 100, 1)
-                    ELSE 0 END AS conv_rate,
-               CASE WHEN SUM(clicks) > 0
-                    THEN ROUND(SUM(cost_micros)::numeric / SUM(clicks) / 1000000.0, 2)
-                    ELSE 0 END AS cpc
-        FROM paid_performance WHERE data_date >= :start
-        GROUP BY campaign_name
-        HAVING SUM(clicks) >= 20
-        ORDER BY SUM(conversions)::numeric / NULLIF(SUM(clicks), 0) ASC LIMIT 5
-    """), {"start": start}).mappings().all()
-
-    # Get overall avg conversion rate for comparison
-    avg_cr = db.execute(text("""
-        SELECT CASE WHEN SUM(clicks) > 0
-                    THEN ROUND(SUM(conversions)::numeric / SUM(clicks) * 100, 1) ELSE 0 END AS avg_rate
-        FROM paid_performance WHERE data_date >= :start
-    """), {"start": start}).scalar() or 0
-
-    for r in rows:
-        rate = float(r["conv_rate"])
-        if rate < float(avg_cr) * 0.5 and r["clicks"] >= 20:
-            insights.append({
-                "id": f"campaign_eff_{len(insights)}",
-                "type": "campaign_efficiency",
-                "category": "paid",
-                "priority": "medium",
-                "title": f'Low conversion rate: "{r["campaign_name"]}"',
-                "description": f'{rate}% conversion rate vs {avg_cr}% account average. {r["clicks"]:,} clicks, {float(r["conversions"]):.0f} conversions.',
-                "metric": {"conv_rate": rate, "avg_conv_rate": float(avg_cr), "clicks": r["clicks"], "cpc": float(r["cpc"])},
-                "action": f'"{r["campaign_name"]}" converts at {rate}% vs your {avg_cr}% average. Review ad copy and landing page alignment, or reallocate budget to higher-converting campaigns.',
-                "affected_entity": r["campaign_name"],
-                "source": "Google Ads data",
-            })
-
-    # ═══════════════════════════════════════════════════════════════
-    # AI VISIBILITY — 3 types, content-focused
-    # ═══════════════════════════════════════════════════════════════
-
-    # ── 8. Platform Content Gap ─────────────────────────────────
-    try:
-        current_platforms = db.execute(text("""
-            SELECT platform, ROUND(AVG(visibility_score)::numeric, 1) AS visibility,
-                   ROUND(AVG(share_of_voice)::numeric, 4) AS sov
-            FROM ai_visibility WHERE data_date >= :start
-            GROUP BY platform
-        """), {"start": start}).mappings().all()
-
-        if current_platforms:
-            avg_vis = sum(float(p["visibility"]) for p in current_platforms) / len(current_platforms)
-            for p in current_platforms:
-                vis = float(p["visibility"])
-                if vis < avg_vis * 0.7 and avg_vis > 0:
-                    gap_pct = round((1 - vis / avg_vis) * 100, 1)
-                    insights.append({
-                        "id": f"platform_gap_{len(insights)}",
-                        "type": "platform_content_gap",
-                        "category": "ai_visibility",
-                        "priority": "high" if gap_pct >= 50 else "medium",
-                        "title": f'Low visibility on {p["platform"]}',
-                        "description": f'Visibility {vis}% vs {avg_vis:.1f}% average across platforms. SOV: {float(p["sov"])*100:.1f}%.',
-                        "metric": {"platform": p["platform"], "visibility": vis, "avg_visibility": avg_vis, "sov": float(p["sov"])},
-                        "action": f'Create content optimized for {p["platform"]} — visibility is {gap_pct}% below your cross-platform average. Research what content format {p["platform"]} favors.',
-                        "affected_entity": p["platform"],
-                        "source": "Profound AI data",
-                    })
-    except Exception:
-        pass
-
-    # ── 9. Citation Opportunity (good organic rank, no AI citation)
-    uf = _url_exclusion("op.page")
-    try:
-        rows = db.execute(text(f"""
-            SELECT op.page,
-                   ROUND((SUM(op.position * op.impressions) / NULLIF(SUM(op.impressions), 0))::numeric, 0) AS avg_position,
-                   SUM(op.clicks) AS clicks
-            FROM organic_performance op
-            WHERE op.data_date >= :start {uf}
-            GROUP BY op.page
-            HAVING ROUND((SUM(op.position * op.impressions) / NULLIF(SUM(op.impressions), 0))::numeric, 0) <= 10
-               AND SUM(op.clicks) >= 20
-               AND op.page NOT IN (SELECT DISTINCT cited_url FROM ai_citations WHERE data_date >= :start)
-            ORDER BY SUM(op.clicks) DESC LIMIT 10
-        """), {"start": start}).mappings().all()
-
-        for r in rows:
-            insights.append({
-                "id": f"citation_{len(insights)}",
-                "type": "citation_opportunity",
-                "category": "ai_visibility",
-                "priority": "medium",
-                "title": f'Citation opportunity: {_strip_domain(r["page"])}',
-                "description": f'Ranks #{int(r["avg_position"])} organically with {r["clicks"]:,} clicks but has zero AI citations.',
-                "metric": {"position": int(r["avg_position"]), "clicks": r["clicks"]},
-                "action": f'Page "{_strip_domain(r["page"])}" ranks well organically but isn\'t cited by AI engines. Add structured Q&A content, clear factual statements, and data that AI can extract.',
-                "affected_entity": r["page"],
-                "source": "GSC + Profound data",
-            })
-    except Exception:
-        pass
-
-    # ── 10. AI Content Gap (competitors cited, FO not) ──────────
-    try:
-        rows = db.execute(text("""
-            SELECT ac.category_name,
-                   ROUND(AVG(ac.share_of_voice)::numeric, 4) AS comp_sov,
-                   COUNT(DISTINCT ac.competitor_domain) AS comp_count
-            FROM ai_competitors ac
-            WHERE ac.data_date >= :start
-              AND ac.category_name NOT IN (
-                  SELECT DISTINCT category_name FROM ai_visibility
-                  WHERE data_date >= :start AND share_of_voice > 0.05
-              )
-            GROUP BY ac.category_name
-            HAVING AVG(ac.share_of_voice) > 0.03
-            ORDER BY AVG(ac.share_of_voice) DESC LIMIT 10
-        """), {"start": start}).mappings().all()
-
-        for r in rows:
-            insights.append({
-                "id": f"ai_gap_{len(insights)}",
-                "type": "ai_content_gap",
-                "category": "ai_visibility",
-                "priority": "high" if float(r["comp_sov"]) > 0.08 else "medium",
-                "title": f'AI content gap: "{r["category_name"]}"',
-                "description": f'{r["comp_count"]} competitors have AI visibility in this category. FO has little to no presence.',
-                "metric": {"category": r["category_name"], "competitor_sov": float(r["comp_sov"]), "competitors": r["comp_count"]},
-                "action": f'Create content about "{r["category_name"]}" — {r["comp_count"]} competitors are cited by AI engines in this category but FO is not.',
-                "affected_entity": r["category_name"],
-                "source": "Profound AI data",
-            })
-    except Exception:
-        pass
-
-    # ═══════════════════════════════════════════════════════════════
     # Sort and summarize
     # ═══════════════════════════════════════════════════════════════
 
@@ -439,7 +230,7 @@ def _compute_insights(days: int, db: Session):
         "low": sum(1 for i in insights if i["priority"] == "low"),
         "by_category": {},
     }
-    for cat in ["organic", "paid", "ai_visibility"]:
+    for cat in ["organic"]:
         summary["by_category"][cat] = sum(1 for i in insights if i["category"] == cat)
 
     result = {"summary": summary, "insights": insights}

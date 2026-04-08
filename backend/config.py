@@ -16,11 +16,6 @@ class Settings(BaseSettings):
     SERPER_REFRESH_DAYS: int = 90
     SERPER_MAX_KEYWORDS_PER_SWEEP: int = 200
 
-    # Profound API (AI Visibility)
-    PROFOUND_API_KEY: str = ""
-    PROFOUND_CATEGORY_ID: str = ""
-    USE_MOCK_PROFOUND: bool = True
-
     # Google Ads (for Keyword Planner + future direct Ads connection)
     GOOGLE_ADS_DEVELOPER_TOKEN: str = ""
     GOOGLE_ADS_CLIENT_ID: str = ""
@@ -28,7 +23,6 @@ class Settings(BaseSettings):
     GOOGLE_ADS_REFRESH_TOKEN: str = ""
     GOOGLE_ADS_CUSTOMER_ID: str = ""
     GOOGLE_ADS_LOGIN_CUSTOMER_ID: str = ""
-    USE_MOCK_ADS: bool = True
 
     # Competitor Ads
     USE_MOCK_TRANSPARENCY: bool = False

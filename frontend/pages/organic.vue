@@ -279,6 +279,72 @@ function kdBarWidth(pos: number) {
 }
 
 
+// ── Sorting ────────────────────────────────────────────────────
+const querySortCol = ref('clicks')
+const querySortAsc = ref(false)
+const pageSortCol = ref('clicks')
+const pageSortAsc = ref(false)
+
+function toggleQuerySort(col: string) {
+  if (querySortCol.value === col) {
+    querySortAsc.value = !querySortAsc.value
+  } else {
+    querySortCol.value = col
+    querySortAsc.value = col === 'position' // position defaults ascending
+  }
+}
+
+function togglePageSort(col: string) {
+  if (pageSortCol.value === col) {
+    pageSortAsc.value = !pageSortAsc.value
+  } else {
+    pageSortCol.value = col
+    pageSortAsc.value = col === 'position' // position defaults ascending
+  }
+}
+
+const sortedQueries = computed(() => {
+  const data = [...(store.organicTopQueries || [])]
+  const col = querySortCol.value
+  const asc = querySortAsc.value
+  data.sort((a: any, b: any) => {
+    let va = col === 'query' ? (a.query || '') : (Number(a[col === 'traffic' ? 'clicks' : col === 'change' ? 'clicks' : col]) || 0)
+    let vb = col === 'query' ? (b.query || '') : (Number(b[col === 'traffic' ? 'clicks' : col === 'change' ? 'clicks' : col]) || 0)
+    if (col === 'change') {
+      va = (a.clicks || 0) - (a.prev_clicks || 0)
+      vb = (b.clicks || 0) - (b.prev_clicks || 0)
+    }
+    if (col === 'position') {
+      va = a.avg_position || 999
+      vb = b.avg_position || 999
+    }
+    if (typeof va === 'string') return asc ? va.localeCompare(vb as string) : (vb as string).localeCompare(va)
+    return asc ? (va as number) - (vb as number) : (vb as number) - (va as number)
+  })
+  return data
+})
+
+const sortedPages = computed(() => {
+  const data = [...(store.organicTopPages || [])]
+  const col = pageSortCol.value
+  const asc = pageSortAsc.value
+  data.sort((a: any, b: any) => {
+    let va: any, vb: any
+    if (col === 'url') { va = a.page || ''; vb = b.page || '' }
+    else if (col === 'position') { va = a.avg_position || 999; vb = b.avg_position || 999 }
+    else if (col === 'change') { va = (a.clicks || 0) - (a.prev_clicks || 0); vb = (b.clicks || 0) - (b.prev_clicks || 0) }
+    else { va = Number(a[col]) || 0; vb = Number(b[col]) || 0 }
+    if (typeof va === 'string') return asc ? va.localeCompare(vb) : vb.localeCompare(va)
+    return asc ? va - vb : vb - va
+  })
+  return data
+})
+
+function sortIcon(active: boolean, asc: boolean) {
+  if (!active) return ''
+  return asc ? '\u2191' : '\u2193'
+}
+
 const tabTitle = computed(() => {
   if (activeTab.value === 'pages') return 'Top pages'
   if (activeTab.value === 'competitors') return 'Organic competitors'
@@ -805,23 +871,23 @@ const movementTabs = [
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
-              <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
-                <th class="text-left px-5 py-3 w-8" title="Row number">#</th>
-                <th class="text-left px-5 py-3" title="Search query that triggered your page in Google results">Keyword</th>
-                <th class="text-center px-5 py-3" title="Branded or non-branded classification from your keyword lists">Category</th>
-                <th class="text-center px-5 py-3" title="Keyword tag group from your keyword lists">Tag</th>
-                <th class="text-right px-5 py-3" title="Estimated monthly search volume based on impressions">Volume</th>
-                <th class="text-center px-5 py-3 w-20" title="Keyword difficulty — how competitive this keyword is based on position">KD</th>
-                <th class="text-right px-5 py-3" title="Number of clicks received from this keyword">Traffic</th>
-                <th class="text-right px-5 py-3" title="Click change compared to previous period">Change</th>
-                <th class="text-right px-5 py-3" title="Average ranking position in Google search results (lower is better)">Position</th>
-                <th class="text-right px-5 py-3" title="Position change compared to previous period (up arrow = improved)">Pos Change</th>
-                <th class="text-left px-5 py-3" title="Landing page URL that ranks for this keyword">URL</th>
+              <tr class="text-[10px] uppercase tracking-wider border-b border-surface-border">
+                <th class="text-left px-5 py-3 w-8 text-gray-400" title="Row number">#</th>
+                <th @click="toggleQuerySort('query')" class="text-left px-5 py-3 cursor-pointer select-none" :class="querySortCol === 'query' ? 'text-fo-action' : 'text-gray-400'" title="Search query">Keyword {{ sortIcon(querySortCol === 'query', querySortAsc) }}</th>
+                <th class="text-center px-5 py-3 text-gray-400" title="Branded or non-branded classification">Category</th>
+                <th class="text-center px-5 py-3 text-gray-400" title="Keyword tag group">Tag</th>
+                <th @click="toggleQuerySort('impressions')" class="text-right px-5 py-3 cursor-pointer select-none" :class="querySortCol === 'impressions' ? 'text-fo-action' : 'text-gray-400'" title="Estimated monthly search volume">Volume {{ sortIcon(querySortCol === 'impressions', querySortAsc) }}</th>
+                <th class="text-center px-5 py-3 w-20 text-gray-400" title="Keyword difficulty">KD</th>
+                <th @click="toggleQuerySort('clicks')" class="text-right px-5 py-3 cursor-pointer select-none" :class="querySortCol === 'clicks' ? 'text-fo-action' : 'text-gray-400'" title="Number of clicks">Traffic {{ sortIcon(querySortCol === 'clicks', querySortAsc) }}</th>
+                <th @click="toggleQuerySort('change')" class="text-right px-5 py-3 cursor-pointer select-none" :class="querySortCol === 'change' ? 'text-fo-action' : 'text-gray-400'" title="Click change">Change {{ sortIcon(querySortCol === 'change', querySortAsc) }}</th>
+                <th @click="toggleQuerySort('position')" class="text-right px-5 py-3 cursor-pointer select-none" :class="querySortCol === 'position' ? 'text-fo-action' : 'text-gray-400'" title="Average ranking position">Position {{ sortIcon(querySortCol === 'position', querySortAsc) }}</th>
+                <th class="text-right px-5 py-3 text-gray-400" title="Position change compared to previous period">Pos Change</th>
+                <th class="text-left px-5 py-3 text-gray-400" title="Landing page URL">URL</th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="(q, i) in store.organicTopQueries"
+                v-for="(q, i) in sortedQueries"
                 :key="q.query"
                 class="border-b border-surface-border last:border-0 hover:bg-surface-hover transition-colors"
               >
@@ -1002,21 +1068,21 @@ const movementTabs = [
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
-              <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
-                <th class="text-left px-5 py-3 w-8">#</th>
-                <th class="text-left px-5 py-3">URL</th>
-                <th class="text-left px-5 py-3">Top keyword</th>
-                <th class="text-right px-5 py-3">Traffic</th>
-                <th class="text-right px-5 py-3">Traffic %</th>
-                <th class="text-right px-5 py-3">Change</th>
-                <th class="text-right px-5 py-3">Keywords</th>
-                <th class="text-right px-5 py-3">CTR</th>
-                <th class="text-right px-5 py-3">Position</th>
+              <tr class="text-[10px] uppercase tracking-wider border-b border-surface-border">
+                <th class="text-left px-5 py-3 w-8 text-gray-400">#</th>
+                <th @click="togglePageSort('url')" class="text-left px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'url' ? 'text-fo-action' : 'text-gray-400'">URL {{ sortIcon(pageSortCol === 'url', pageSortAsc) }}</th>
+                <th class="text-left px-5 py-3 text-gray-400">Top keyword</th>
+                <th @click="togglePageSort('clicks')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'clicks' ? 'text-fo-action' : 'text-gray-400'">Traffic {{ sortIcon(pageSortCol === 'clicks', pageSortAsc) }}</th>
+                <th class="text-right px-5 py-3 text-gray-400">Traffic %</th>
+                <th @click="togglePageSort('change')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'change' ? 'text-fo-action' : 'text-gray-400'">Change {{ sortIcon(pageSortCol === 'change', pageSortAsc) }}</th>
+                <th @click="togglePageSort('keywords')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'keywords' ? 'text-fo-action' : 'text-gray-400'">Keywords {{ sortIcon(pageSortCol === 'keywords', pageSortAsc) }}</th>
+                <th @click="togglePageSort('ctr')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'ctr' ? 'text-fo-action' : 'text-gray-400'">CTR {{ sortIcon(pageSortCol === 'ctr', pageSortAsc) }}</th>
+                <th @click="togglePageSort('position')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'position' ? 'text-fo-action' : 'text-gray-400'">Position {{ sortIcon(pageSortCol === 'position', pageSortAsc) }}</th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="(p, i) in store.organicTopPages"
+                v-for="(p, i) in sortedPages"
                 :key="p.page"
                 class="border-b border-surface-border last:border-0 hover:bg-surface-hover transition-colors group"
               >

@@ -85,7 +85,13 @@ const newPasswords = ref<Record<number, string>>({})
 
 async function loadUsers() {
   try {
-    users.value = await get('/auth/users')
+    const token = import.meta.client ? localStorage.getItem('fo_intel_token') : null
+    if (!token) return
+    const config = useRuntimeConfig()
+    const res = await fetch(`${config.public.apiBase}/auth/users`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    if (res.ok) users.value = await res.json()
   } catch {}
 }
 
@@ -146,9 +152,7 @@ onMounted(() => {
 
 const pipelineConfig = [
   { name: 'gsc', label: 'GSC Organic', endpoint: '/ingest/gsc?days=30', description: 'Google Search Console — organic impressions, clicks, CTR, position', schedule: 'Daily 3:00 AM CT' },
-  { name: 'ads', label: 'Google Ads', endpoint: '/ingest/ads?days=30', description: 'Google Ads API — paid performance, spend, CPC, impression share', schedule: 'Daily 3:30 AM CT' },
-  { name: 'profound', label: 'AI Visibility', endpoint: '/ingest/profound?days=30', description: 'Profound API — AI engine share of voice, citations, benchmarks', schedule: 'Daily 4:00 AM CT' },
-  { name: 'transparency', label: 'Competitor Ads', endpoint: '/ingest/transparency', description: 'Google Ads Transparency Center — competitor ad creatives', schedule: 'Weekly Sunday 6:00 AM CT' },
+  { name: 'keyword_planner', label: 'Keyword Planner', endpoint: '/ingest/keyword-planner', description: 'Google Ads Keyword Planner — search volume, CPC, competition for all GSC keywords', schedule: 'Weekly' },
 ]
 
 function fmtDate(d: string) {
