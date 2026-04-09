@@ -264,6 +264,99 @@ function positionBgColor(pos: number) {
   return 'bg-gray-500/15'
 }
 
+// ── Organic Competitors computeds ────────────────────────────────
+const activeCompetitors = computed(() => organicCompetitors.value.filter((c: any) => !c.is_self))
+
+const compTotalShared = computed(() => {
+  const seen = new Set<string>()
+  let total = 0
+  for (const c of activeCompetitors.value) {
+    total += c.common_keywords || 0
+  }
+  return total
+})
+
+const compAvgYourPos = computed(() => {
+  const withData = activeCompetitors.value.filter((c: any) => c.fo_avg_position > 0)
+  if (!withData.length) return 0
+  return withData.reduce((sum: number, c: any) => sum + c.fo_avg_position, 0) / withData.length
+})
+
+const compOverallWinRate = computed(() => {
+  const totalWins = activeCompetitors.value.reduce((s: number, c: any) => s + (c.fo_wins || 0), 0)
+  const totalLosses = activeCompetitors.value.reduce((s: number, c: any) => s + (c.competitor_wins || 0), 0)
+  const total = totalWins + totalLosses
+  return total > 0 ? Math.round((totalWins / total) * 100) : 0
+})
+
+function compWinPct(comp: any) {
+  const total = (comp.fo_wins || 0) + (comp.competitor_wins || 0)
+  return total > 0 ? Math.round((comp.fo_wins / total) * 100) : 50
+}
+
+// Per-competitor keyword expansion
+const expandedCompetitors = ref<Record<string, boolean>>({})
+const compKeywords = ref<Record<string, any[]>>({})
+const compKeywordsLoading = ref<Record<string, boolean>>({})
+
+async function toggleCompExpand(domain: string) {
+  expandedCompetitors.value[domain] = !expandedCompetitors.value[domain]
+  // Load keywords on first expand
+  if (expandedCompetitors.value[domain] && !compKeywords.value[domain]) {
+    compKeywordsLoading.value[domain] = true
+    try {
+      compKeywords.value[domain] = await get('/dashboard/organic/competitors/keywords', { domain, days: 90 })
+    } catch { compKeywords.value[domain] = [] }
+    compKeywordsLoading.value[domain] = false
+  }
+}
+
+// ── Top Pages expand + views ─────────────────────────────────────
+const pageViews = [
+  { key: 'all', label: 'All Pages' },
+  { key: 'growing', label: 'Growing' },
+  { key: 'declining', label: 'Declining' },
+  { key: 'opportunities', label: 'Opportunities' },
+] as const
+const pageView = ref<string>('all')
+const expandedPages = ref<Record<string, boolean>>({})
+const pageKeywords = ref<Record<string, any[]>>({})
+const pageKeywordsLoading = ref<Record<string, boolean>>({})
+
+const growingPages = computed(() =>
+  (store.organicTopPages || []).filter((p: any) => p.prev_clicks != null && p.clicks > p.prev_clicks).length
+)
+const opportunityPages = computed(() =>
+  (store.organicTopPages || []).filter((p: any) => (p.keywords || 0) >= 5 && (p.clicks || 0) < 10).length
+)
+
+const filteredSortedPages = computed(() => {
+  let data = sortedPages.value
+  if (pageView.value === 'growing') {
+    data = data.filter((p: any) => p.prev_clicks != null && p.clicks > p.prev_clicks)
+  } else if (pageView.value === 'declining') {
+    data = data.filter((p: any) => p.prev_clicks != null && p.clicks < p.prev_clicks)
+  } else if (pageView.value === 'opportunities') {
+    data = data.filter((p: any) => (p.keywords || 0) >= 5 && (p.clicks || 0) < 10)
+  }
+  return data
+})
+
+async function togglePageExpand(page: string) {
+  expandedPages.value[page] = !expandedPages.value[page]
+  if (expandedPages.value[page] && !pageKeywords.value[page]) {
+    pageKeywordsLoading.value[page] = true
+    try {
+      const brandParam = activeCategory.value === 'all' ? undefined : activeCategory.value
+      const tagParam = activeTag.value === 'all' ? undefined : activeTag.value
+      pageKeywords.value[page] = await get('/dashboard/organic/page-keywords', {
+        page, days: store.periodDays, brand: brandParam, tag: tagParam
+      })
+    } catch { pageKeywords.value[page] = [] }
+    pageKeywordsLoading.value[page] = false
+  }
+}
+
 function kdBarColor(pos: number) {
   if (pos <= 3) return 'bg-emerald-500'
   if (pos <= 10) return 'bg-blue-500'
@@ -1029,107 +1122,161 @@ const movementTabs = [
     <!-- TAB 2: Top Pages -->
     <!-- ============================================ -->
     <template v-else-if="activeTab === 'pages'">
-      <!-- Chart -->
-      <div class="bg-surface-card rounded-xl border border-surface-border p-5 mb-6">
-        <div class="flex items-center justify-between mb-4">
-          <div>
-            <h2 class="text-sm font-semibold text-gray-900">Organic traffic by page</h2>
-            <p class="text-xs text-gray-400 mt-1">{{ dateRange }}</p>
-          </div>
-          <div class="flex items-center gap-4">
-            <span class="flex items-center gap-1.5 text-xs text-gray-400">
-              <span class="w-3 h-0.5 bg-amber rounded-full inline-block" /> Organic traffic
-            </span>
-            <span class="flex items-center gap-1.5 text-xs text-gray-400">
-              <span class="w-3 h-0.5 bg-fo-action rounded-full inline-block" /> Impressions
-            </span>
-          </div>
+      <!-- Summary KPIs -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Pages Ranking</p>
+          <p class="text-2xl font-bold text-gray-900">{{ totalPages }}</p>
         </div>
-        <div class="h-64">
-          <Line v-if="topPagesChart" :data="topPagesChart.data" :options="topPagesChart.options" />
+        <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Traffic</p>
+          <p class="text-2xl font-bold text-gray-900">{{ fmtNum(totalPageTraffic) }}</p>
+        </div>
+        <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Growing Pages</p>
+          <p class="text-2xl font-bold text-status-up">{{ growingPages }}</p>
+        </div>
+        <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+          <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Opportunities</p>
+          <p class="text-2xl font-bold text-fo-action">{{ opportunityPages }}</p>
+          <p class="text-[10px] text-gray-400 mt-0.5">5+ keywords, low clicks</p>
         </div>
       </div>
 
-      <!-- Summary bar -->
-      <div class="flex items-center gap-4 mb-4 px-1">
-        <span class="text-sm text-gray-500">
-          <span class="text-gray-900 font-semibold">{{ totalPages }}</span> pages
-        </span>
-        <span class="text-surface-border">|</span>
-        <span class="text-sm text-gray-500">
-          Total traffic: <span class="text-gray-900 font-semibold">{{ fmtNum(totalPageTraffic) }}</span>
-        </span>
-        <span class="text-surface-border">|</span>
-        <span class="text-xs text-gray-400">{{ dateRange }}</span>
+      <!-- View toggle -->
+      <div class="flex items-center gap-2 mb-4">
+        <button
+          v-for="v in pageViews" :key="v.key"
+          @click="pageView = v.key"
+          class="px-3 py-1.5 text-[10px] font-medium rounded-md transition-colors"
+          :class="pageView === v.key ? 'bg-fo-action text-white' : 'text-gray-500 hover:text-gray-700 bg-surface-card border border-surface-border'"
+        >{{ v.label }}</button>
       </div>
 
-      <!-- Pages Table -->
+      <!-- Pages table with expandable rows -->
       <div class="bg-surface-card rounded-xl border border-surface-border mb-6">
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
               <tr class="text-[10px] uppercase tracking-wider border-b border-surface-border">
-                <th class="text-left px-5 py-3 w-8 text-gray-400">#</th>
-                <th @click="togglePageSort('url')" class="text-left px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'url' ? 'text-fo-action' : 'text-gray-400'">URL {{ sortIcon(pageSortCol === 'url', pageSortAsc) }}</th>
-                <th class="text-left px-5 py-3 text-gray-400">Top keyword</th>
-                <th @click="togglePageSort('clicks')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'clicks' ? 'text-fo-action' : 'text-gray-400'">Traffic {{ sortIcon(pageSortCol === 'clicks', pageSortAsc) }}</th>
-                <th class="text-right px-5 py-3 text-gray-400">Traffic %</th>
-                <th @click="togglePageSort('change')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'change' ? 'text-fo-action' : 'text-gray-400'">Change {{ sortIcon(pageSortCol === 'change', pageSortAsc) }}</th>
-                <th @click="togglePageSort('keywords')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'keywords' ? 'text-fo-action' : 'text-gray-400'">Keywords {{ sortIcon(pageSortCol === 'keywords', pageSortAsc) }}</th>
-                <th @click="togglePageSort('ctr')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'ctr' ? 'text-fo-action' : 'text-gray-400'">CTR {{ sortIcon(pageSortCol === 'ctr', pageSortAsc) }}</th>
-                <th @click="togglePageSort('position')" class="text-right px-5 py-3 cursor-pointer select-none" :class="pageSortCol === 'position' ? 'text-fo-action' : 'text-gray-400'">Position {{ sortIcon(pageSortCol === 'position', pageSortAsc) }}</th>
+                <th class="w-8 px-3 py-3"></th>
+                <th @click="togglePageSort('url')" class="text-left px-4 py-3 cursor-pointer select-none" :class="pageSortCol === 'url' ? 'text-fo-action' : 'text-gray-400'">Page {{ sortIcon(pageSortCol === 'url', pageSortAsc) }}</th>
+                <th @click="togglePageSort('clicks')" class="text-right px-4 py-3 cursor-pointer select-none" :class="pageSortCol === 'clicks' ? 'text-fo-action' : 'text-gray-400'">Traffic {{ sortIcon(pageSortCol === 'clicks', pageSortAsc) }}</th>
+                <th @click="togglePageSort('change')" class="text-right px-4 py-3 cursor-pointer select-none" :class="pageSortCol === 'change' ? 'text-fo-action' : 'text-gray-400'">Change {{ sortIcon(pageSortCol === 'change', pageSortAsc) }}</th>
+                <th @click="togglePageSort('keywords')" class="text-right px-4 py-3 cursor-pointer select-none" :class="pageSortCol === 'keywords' ? 'text-fo-action' : 'text-gray-400'">Keywords {{ sortIcon(pageSortCol === 'keywords', pageSortAsc) }}</th>
+                <th @click="togglePageSort('position')" class="text-right px-4 py-3 cursor-pointer select-none" :class="pageSortCol === 'position' ? 'text-fo-action' : 'text-gray-400'">Position {{ sortIcon(pageSortCol === 'position', pageSortAsc) }}</th>
+                <th @click="togglePageSort('ctr')" class="text-right px-4 py-3 cursor-pointer select-none" :class="pageSortCol === 'ctr' ? 'text-fo-action' : 'text-gray-400'">CTR {{ sortIcon(pageSortCol === 'ctr', pageSortAsc) }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr
-                v-for="(p, i) in sortedPages"
-                :key="p.page"
-                class="border-b border-surface-border last:border-0 hover:bg-surface-hover transition-colors group"
-              >
-                <td class="px-5 py-3 text-gray-400 text-xs">{{ i + 1 }}</td>
-                <td class="px-5 py-3" :title="p.page">
-                  <a
-                    :href="p.page"
-                    target="_blank"
-                    class="text-fo-action font-medium text-xs hover:underline truncate block max-w-[400px]"
-                  >
-                    {{ truncateUrl(p.page) }}
-                  </a>
-                </td>
-                <td class="px-5 py-3 text-left text-gray-400 text-xs">—</td>
-                <td class="px-5 py-3 text-right text-gray-900 font-medium">{{ fmtNum(p.clicks) }}</td>
-                <td class="px-5 py-3 text-right text-xs">
-                  <span
-                    v-if="p.prev_clicks != null && p.prev_clicks > 0"
-                    class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold"
-                    :class="p.clicks >= p.prev_clicks ? 'bg-status-up/15 text-status-up' : 'bg-status-down/15 text-status-down'"
-                  >
-                    {{ p.clicks >= p.prev_clicks ? '+' : '' }}{{ ((p.clicks - p.prev_clicks) / p.prev_clicks * 100).toFixed(0) }}%
-                  </span>
-                  <span v-else class="text-gray-400">—</span>
-                </td>
-                <td class="px-5 py-3 text-right text-xs" :class="p.prev_clicks != null && p.clicks > p.prev_clicks ? 'text-status-up' : p.clicks < (p.prev_clicks || 0) ? 'text-status-down' : 'text-gray-400'">
-                  <template v-if="p.prev_clicks != null">
-                    <span class="inline-flex items-center gap-0.5">
+              <template v-for="(p, i) in filteredSortedPages" :key="p.page">
+                <!-- Page row -->
+                <tr
+                  class="border-b border-surface-border hover:bg-surface-hover transition-colors cursor-pointer"
+                  @click="togglePageExpand(p.page)"
+                >
+                  <td class="px-3 py-3 text-center">
+                    <svg
+                      class="w-3.5 h-3.5 text-gray-400 transition-transform inline-block"
+                      :class="expandedPages[p.page] ? 'rotate-180' : ''"
+                      fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
+                    >
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                    </svg>
+                  </td>
+                  <td class="px-4 py-3" :title="p.page">
+                    <a
+                      :href="p.page"
+                      target="_blank"
+                      @click.stop
+                      class="text-fo-action font-medium text-xs hover:underline truncate block max-w-[400px]"
+                    >{{ truncateUrl(p.page) }}</a>
+                  </td>
+                  <td class="px-4 py-3 text-right text-gray-900 font-medium text-xs">{{ fmtNum(p.clicks) }}</td>
+                  <td class="px-4 py-3 text-right">
+                    <span
+                      v-if="p.prev_clicks != null && p.prev_clicks > 0"
+                      class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                      :class="p.clicks >= p.prev_clicks ? 'bg-status-up/15 text-status-up' : 'bg-status-down/15 text-status-down'"
+                    >
                       {{ p.clicks > p.prev_clicks ? '\u2191' : p.clicks < p.prev_clicks ? '\u2193' : '\u2192' }}
-                      {{ Math.abs(p.clicks - p.prev_clicks) }}
+                      {{ p.clicks >= p.prev_clicks ? '+' : '' }}{{ ((p.clicks - p.prev_clicks) / p.prev_clicks * 100).toFixed(0) }}%
                     </span>
-                  </template>
-                  <template v-else>
-                    <span class="text-gray-500">—</span>
-                  </template>
-                </td>
-                <td class="px-5 py-3 text-right text-gray-700">{{ p.keywords ?? '—' }}</td>
-                <td class="px-5 py-3 text-right text-gray-700">{{ fmtPct(p.ctr) }}</td>
-                <td class="px-5 py-3 text-right">
-                  <span
-                    class="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold"
-                    :class="[positionColor(p.avg_position), positionBgColor(p.avg_position)]"
-                  >
-                    {{ fmtPos(p.avg_position) }}
-                  </span>
-                </td>
-              </tr>
+                    <span v-else class="text-[10px] text-gray-400">new</span>
+                  </td>
+                  <td class="px-4 py-3 text-right text-xs text-gray-700">{{ p.keywords ?? '—' }}</td>
+                  <td class="px-4 py-3 text-right">
+                    <span
+                      class="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold"
+                      :class="[positionColor(p.avg_position), positionBgColor(p.avg_position)]"
+                    >{{ fmtPos(p.avg_position) }}</span>
+                  </td>
+                  <td class="px-4 py-3 text-right text-xs text-gray-700">{{ fmtPct(p.ctr) }}</td>
+                </tr>
+
+                <!-- Expanded keyword detail -->
+                <tr v-if="expandedPages[p.page]" class="bg-gray-50/50">
+                  <td colspan="7" class="px-0 py-0">
+                    <!-- Loading -->
+                    <div v-if="pageKeywordsLoading[p.page]" class="flex justify-center py-6">
+                      <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-fo-action"></div>
+                    </div>
+
+                    <!-- Keyword sub-table -->
+                    <div v-else-if="pageKeywords[p.page]?.length" class="px-8 py-3">
+                      <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-2">Keywords driving this page</p>
+                      <table class="w-full text-xs">
+                        <thead>
+                          <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
+                            <th class="text-left py-2 pr-4">Keyword</th>
+                            <th class="text-right py-2 px-3">Clicks</th>
+                            <th class="text-right py-2 px-3">Change</th>
+                            <th class="text-right py-2 px-3">Impressions</th>
+                            <th class="text-right py-2 px-3">Position</th>
+                            <th class="text-right py-2 pl-3">CTR</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr
+                            v-for="kw in pageKeywords[p.page]"
+                            :key="kw.keyword"
+                            class="border-b border-surface-border/50 last:border-0"
+                          >
+                            <td class="py-2 pr-4 text-gray-900 font-medium">{{ kw.keyword }}</td>
+                            <td class="py-2 px-3 text-right text-gray-900">{{ fmtNum(kw.clicks) }}</td>
+                            <td class="py-2 px-3 text-right">
+                              <span
+                                v-if="kw.prev_clicks != null"
+                                class="text-[10px] font-semibold"
+                                :class="kw.clicks > kw.prev_clicks ? 'text-status-up' : kw.clicks < kw.prev_clicks ? 'text-status-down' : 'text-gray-400'"
+                              >
+                                {{ kw.clicks > kw.prev_clicks ? '\u2191' : kw.clicks < kw.prev_clicks ? '\u2193' : '\u2192' }}
+                                {{ kw.prev_clicks > 0 ? ((kw.clicks - kw.prev_clicks) / kw.prev_clicks * 100).toFixed(0) + '%' : 'new' }}
+                              </span>
+                              <span v-else class="text-gray-400">—</span>
+                            </td>
+                            <td class="py-2 px-3 text-right text-gray-500">{{ fmtNum(kw.impressions) }}</td>
+                            <td class="py-2 px-3 text-right">
+                              <span class="font-semibold" :class="positionColor(kw.position)">{{ kw.position || '—' }}</span>
+                              <span
+                                v-if="kw.prev_position != null && kw.prev_position > 0"
+                                class="ml-1 text-[10px]"
+                                :class="kw.position < kw.prev_position ? 'text-status-up' : kw.position > kw.prev_position ? 'text-status-down' : 'text-gray-400'"
+                              >{{ kw.position < kw.prev_position ? '\u2191' : kw.position > kw.prev_position ? '\u2193' : '' }}{{ kw.position !== kw.prev_position ? Math.abs(kw.position - kw.prev_position) : '' }}</span>
+                            </td>
+                            <td class="py-2 pl-3 text-right text-gray-500">{{ fmtPct(kw.ctr) }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <!-- No keywords -->
+                    <div v-else class="px-8 py-4">
+                      <p class="text-xs text-gray-400">No keyword data for this page.</p>
+                    </div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -1140,74 +1287,141 @@ const movementTabs = [
     <!-- TAB 3: Organic Competitors -->
     <!-- ============================================ -->
     <template v-else-if="activeTab === 'competitors'">
-      <!-- Competitor comparison table -->
-      <div v-if="organicCompetitors.length" class="bg-surface-card rounded-xl border border-surface-border mb-6">
-        <div class="px-5 py-4 border-b border-surface-border">
-          <h2 class="text-sm font-semibold text-gray-900">SERP Competitors</h2>
-          <p class="text-xs text-gray-400 mt-0.5">How tracked competitors rank on keywords you share (from SERP data)</p>
+      <template v-if="activeCompetitors.length">
+        <!-- Summary row -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Competitors Tracked</p>
+            <p class="text-2xl font-bold text-gray-900">{{ activeCompetitors.length }}</p>
+          </div>
+          <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Total Shared Keywords</p>
+            <p class="text-2xl font-bold text-gray-900">{{ fmtNum(compTotalShared) }}</p>
+          </div>
+          <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Your Avg Position</p>
+            <p class="text-2xl font-bold" :class="positionColor(compAvgYourPos)">{{ fmtPos(compAvgYourPos) }}</p>
+          </div>
+          <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Overall Win Rate</p>
+            <p class="text-2xl font-bold" :class="compOverallWinRate >= 50 ? 'text-status-up' : 'text-status-down'">{{ compOverallWinRate }}%</p>
+          </div>
         </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
-                <th class="text-left px-5 py-3" title="Competitor domain">Domain</th>
-                <th class="text-right px-5 py-3" title="Keywords both you and this competitor rank for">Shared Keywords</th>
-                <th class="text-right px-5 py-3" title="Competitor's avg position on shared keywords">Their Pos</th>
-                <th class="text-right px-5 py-3" title="Your avg position on those same shared keywords">Your Pos</th>
-                <th class="text-center px-5 py-3" title="Who ranks higher on shared keywords">Head to Head</th>
-                <th class="text-right px-5 py-3" title="Keywords where competitor ranks in top 3">Top 3</th>
-                <th class="text-right px-5 py-3" title="Keywords where competitor ranks in top 10">Top 10</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="comp in organicCompetitors.filter(c => !c.is_self)"
-                :key="comp.domain"
-                class="border-b border-surface-border last:border-0 hover:bg-surface-hover transition-colors"
-              >
-                <td class="px-5 py-3">
-                  <span class="text-gray-900 font-medium text-xs">{{ comp.domain }}</span>
-                </td>
-                <td class="px-5 py-3 text-right text-gray-900 font-semibold">{{ fmtNum(comp.common_keywords) }}</td>
-                <td class="px-5 py-3 text-right">
-                  <span
-                    class="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold"
-                    :class="[positionColor(comp.avg_position), positionBgColor(comp.avg_position)]"
-                  >{{ fmtPos(comp.avg_position) }}</span>
-                </td>
-                <td class="px-5 py-3 text-right">
-                  <span
-                    class="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold"
-                    :class="[positionColor(comp.fo_avg_position), positionBgColor(comp.fo_avg_position)]"
-                  >{{ fmtPos(comp.fo_avg_position) }}</span>
-                </td>
-                <td class="px-5 py-3 text-center">
-                  <div v-if="comp.common_keywords > 0" class="flex items-center justify-center gap-1.5">
-                    <div class="flex items-center h-4 rounded-full overflow-hidden w-24 bg-gray-100">
-                      <div
-                        class="h-full bg-fo-action/80 rounded-l-full"
-                        :style="{ width: (comp.fo_wins / (comp.fo_wins + comp.competitor_wins) * 100) + '%' }"
-                        :title="`FO wins ${comp.fo_wins}`"
-                      />
-                      <div
-                        class="h-full bg-gray-400/60 rounded-r-full"
-                        :style="{ width: (comp.competitor_wins / (comp.fo_wins + comp.competitor_wins) * 100) + '%' }"
-                        :title="`${comp.domain} wins ${comp.competitor_wins}`"
-                      />
-                    </div>
-                    <span class="text-[10px] font-medium" :class="comp.fo_wins >= comp.competitor_wins ? 'text-fo-action' : 'text-status-down'">
-                      {{ comp.fo_wins }}-{{ comp.competitor_wins }}
-                    </span>
+
+        <!-- Per-competitor cards -->
+        <div class="space-y-4">
+          <div
+            v-for="comp in activeCompetitors"
+            :key="comp.domain"
+            class="bg-surface-card rounded-xl border border-surface-border overflow-hidden"
+          >
+            <!-- Card header — clickable to expand -->
+            <button
+              @click="toggleCompExpand(comp.domain)"
+              class="w-full px-5 py-4 flex items-center justify-between hover:bg-surface-hover transition-colors"
+            >
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center">
+                  <span class="text-xs font-bold text-gray-500 uppercase">{{ comp.domain.charAt(0) }}</span>
+                </div>
+                <div class="text-left">
+                  <h3 class="text-sm font-semibold text-gray-900">{{ comp.domain }}</h3>
+                  <p class="text-[10px] text-gray-400">{{ comp.common_keywords }} shared keywords</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-4">
+                <!-- Quick stats inline -->
+                <div v-if="comp.common_keywords > 0" class="hidden sm:flex items-center gap-4">
+                  <div class="text-right">
+                    <p class="text-[10px] text-gray-400">You</p>
+                    <span class="text-sm font-bold" :class="positionColor(comp.fo_avg_position)">{{ fmtPos(comp.fo_avg_position) }}</span>
                   </div>
-                  <span v-else class="text-gray-300 text-xs">--</span>
-                </td>
-                <td class="px-5 py-3 text-right text-status-up text-xs font-medium">{{ comp.top3 }}</td>
-                <td class="px-5 py-3 text-right text-fo-action text-xs font-medium">{{ comp.top10 }}</td>
-              </tr>
-            </tbody>
-          </table>
+                  <span class="text-gray-300 text-xs">vs</span>
+                  <div class="text-left">
+                    <p class="text-[10px] text-gray-400">Them</p>
+                    <span class="text-sm font-bold" :class="positionColor(comp.avg_position)">{{ fmtPos(comp.avg_position) }}</span>
+                  </div>
+                  <div class="flex items-center h-2 rounded-full overflow-hidden w-16 bg-gray-100 ml-2">
+                    <div class="h-full bg-fo-action" :style="{ width: compWinPct(comp) + '%' }" />
+                    <div class="h-full bg-gray-400" :style="{ width: (100 - compWinPct(comp)) + '%' }" />
+                  </div>
+                  <span class="text-[10px] font-semibold" :class="comp.fo_wins >= comp.competitor_wins ? 'text-status-up' : 'text-status-down'">
+                    {{ comp.fo_wins }}-{{ comp.competitor_wins }}
+                  </span>
+                </div>
+                <!-- Expand chevron -->
+                <svg
+                  class="w-4 h-4 text-gray-400 transition-transform"
+                  :class="expandedCompetitors[comp.domain] ? 'rotate-180' : ''"
+                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </div>
+            </button>
+
+            <!-- Expanded keyword table -->
+            <div v-if="expandedCompetitors[comp.domain]" class="border-t border-surface-border">
+              <!-- Loading state -->
+              <div v-if="compKeywordsLoading[comp.domain]" class="flex justify-center py-8">
+                <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-fo-action"></div>
+              </div>
+
+              <!-- Keyword table -->
+              <div v-else-if="compKeywords[comp.domain]?.length" class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-surface-border">
+                      <th class="text-left px-5 py-3">Keyword</th>
+                      <th class="text-center px-4 py-3">Your Pos</th>
+                      <th class="text-center px-4 py-3">Their Pos</th>
+                      <th class="text-center px-4 py-3">Winner</th>
+                      <th class="text-right px-4 py-3">Clicks</th>
+                      <th class="text-right px-5 py-3">Impressions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="kw in compKeywords[comp.domain]"
+                      :key="kw.keyword"
+                      class="border-b border-surface-border last:border-0 hover:bg-surface-hover transition-colors"
+                    >
+                      <td class="px-5 py-2.5">
+                        <span class="text-xs text-gray-900 font-medium">{{ kw.keyword }}</span>
+                      </td>
+                      <td class="px-4 py-2.5 text-center">
+                        <span
+                          class="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold"
+                          :class="[positionColor(kw.your_position), positionBgColor(kw.your_position)]"
+                        >{{ kw.your_position || '--' }}</span>
+                      </td>
+                      <td class="px-4 py-2.5 text-center">
+                        <span
+                          class="inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold"
+                          :class="[positionColor(kw.their_position), positionBgColor(kw.their_position)]"
+                        >{{ kw.their_position || '--' }}</span>
+                      </td>
+                      <td class="px-4 py-2.5 text-center">
+                        <span
+                          class="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                          :class="kw.winner === 'you' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-50 text-red-500'"
+                        >{{ kw.winner === 'you' ? 'You' : 'Them' }}</span>
+                      </td>
+                      <td class="px-4 py-2.5 text-right text-xs text-gray-900">{{ fmtNum(kw.clicks) }}</td>
+                      <td class="px-5 py-2.5 text-right text-xs text-gray-500">{{ fmtNum(kw.impressions) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- No keywords -->
+              <div v-else class="p-6 text-center">
+                <p class="text-xs text-gray-400">No shared keyword data yet. Run a Serper sweep to discover overlap.</p>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      </template>
 
       <!-- Empty state -->
       <div v-else class="bg-surface-card rounded-xl border border-surface-border p-12 text-center mb-6">

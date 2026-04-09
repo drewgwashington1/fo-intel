@@ -288,6 +288,12 @@ def organic_top_pages(days: int = Query(30), limit: int = Query(20), brand: str 
     return _cached_or_build(db, f"organic_top_pages:{days}:{limit}:{brand or 'all'}:{tag or 'all'}", build_organic_top_pages, days, limit, brand, tag)
 
 
+@router.get("/organic/page-keywords")
+def organic_page_keywords(page: str = Query(...), days: int = Query(30), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
+    from services.summaries import build_page_keywords
+    return build_page_keywords(db, page, days, brand, tag)
+
+
 @router.get("/organic/devices")
 def organic_devices(days: int = Query(30), brand: str = Query(None), tag: str = Query(None), db: Session = Depends(get_db)):
     return _cached_or_build(db, f"organic_devices:{days}:{brand or 'all'}:{tag or 'all'}", build_organic_devices, days, brand, tag)
@@ -301,6 +307,12 @@ def organic_countries(days: int = Query(30), brand: str = Query(None), tag: str 
 @router.get("/organic/competitors")
 def organic_competitors_data(days: int = Query(90), db: Session = Depends(get_db)):
     return _cached_or_build(db, f"organic_competitors:{days}", build_organic_competitors, days)
+
+
+@router.get("/organic/competitors/keywords")
+def organic_competitor_keywords(domain: str = Query(...), days: int = Query(90), db: Session = Depends(get_db)):
+    from services.summaries import build_organic_competitor_keywords
+    return build_organic_competitor_keywords(db, domain, days)
 
 
 @router.get("/organic/competitors/backfill")

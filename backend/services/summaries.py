@@ -453,20 +453,82 @@ def build_organic_movements(db: Session, days: int, brand: str = None, tag: str 
 def build_organic_top_pages(db: Session, days: int, limit: int = 20, brand: str = None, tag: str = None):
     key = f"organic_top_pages:{days}:{limit}:{brand or 'all'}:{tag or 'all'}"
     start = _period(days)
+    prev_start = _period(days * 2)
     bf = _combined_filter(db, brand, tag)
     rows = db.execute(text(f"""
-        SELECT page, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
-               CASE WHEN SUM(impressions) > 0
-                    THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1) ELSE 0 END AS avg_position,
-               COUNT(DISTINCT query) AS keywords,
-               CASE WHEN SUM(impressions) > 0
-                    THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4) ELSE 0 END AS ctr
-        FROM organic_performance WHERE data_date >= :start {bf}
-        GROUP BY page ORDER BY clicks DESC LIMIT :lim
-    """), {"start": start, "lim": limit}).mappings().all()
+        WITH current AS (
+            SELECT page, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
+                   CASE WHEN SUM(impressions) > 0
+                        THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1) ELSE 0 END AS avg_position,
+                   COUNT(DISTINCT query) AS keywords,
+                   CASE WHEN SUM(impressions) > 0
+                        THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4) ELSE 0 END AS ctr
+            FROM organic_performance WHERE data_date >= :start {bf}
+            GROUP BY page
+        ),
+        previous AS (
+            SELECT page, SUM(clicks) AS prev_clicks, SUM(impressions) AS prev_impressions,
+                   CASE WHEN SUM(impressions) > 0
+                        THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1) ELSE 0 END AS prev_position
+            FROM organic_performance WHERE data_date >= :prev_start AND data_date < :start {bf}
+            GROUP BY page
+        )
+        SELECT c.page, c.clicks, c.impressions, c.avg_position, c.keywords, c.ctr,
+               p.prev_clicks, p.prev_impressions, p.prev_position
+        FROM current c
+        LEFT JOIN previous p ON c.page = p.page
+        ORDER BY c.clicks DESC
+        LIMIT :lim
+    """), {"start": start, "prev_start": prev_start, "lim": limit}).mappings().all()
     result = [dict(r) for r in rows]
     set_cached(db, key, result)
     return result
+
+
+def build_page_keywords(db: Session, page: str, days: int = 30, brand: str = None, tag: str = None):
+    """Return keywords driving traffic to a specific page with current + prev period data."""
+    start = _period(days)
+    prev_start = _period(days * 2)
+    bf = _combined_filter(db, brand, tag)
+    rows = db.execute(text(f"""
+        WITH current AS (
+            SELECT query, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
+                   CASE WHEN SUM(impressions) > 0
+                        THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1) ELSE 0 END AS avg_position,
+                   CASE WHEN SUM(impressions) > 0
+                        THEN ROUND(SUM(clicks)::numeric / SUM(impressions), 4) ELSE 0 END AS ctr
+            FROM organic_performance
+            WHERE data_date >= :start AND page = :page {bf}
+            GROUP BY query
+        ),
+        previous AS (
+            SELECT query, SUM(clicks) AS prev_clicks,
+                   CASE WHEN SUM(impressions) > 0
+                        THEN ROUND((SUM(position * impressions) / SUM(impressions))::numeric, 1) ELSE 0 END AS prev_position
+            FROM organic_performance
+            WHERE data_date >= :prev_start AND data_date < :start AND page = :page {bf}
+            GROUP BY query
+        )
+        SELECT c.query AS keyword, c.clicks, c.impressions, c.avg_position, c.ctr,
+               p.prev_clicks, p.prev_position
+        FROM current c
+        LEFT JOIN previous p ON c.query = p.query
+        ORDER BY c.clicks DESC
+        LIMIT 50
+    """), {"start": start, "prev_start": prev_start, "page": page}).mappings().all()
+
+    return [
+        {
+            "keyword": r["keyword"],
+            "clicks": int(r["clicks"] or 0),
+            "impressions": int(r["impressions"] or 0),
+            "position": int(round(float(r["avg_position"] or 0))),
+            "ctr": float(r["ctr"] or 0),
+            "prev_clicks": int(r["prev_clicks"] or 0) if r["prev_clicks"] is not None else None,
+            "prev_position": int(round(float(r["prev_position"] or 0))) if r["prev_position"] is not None else None,
+        }
+        for r in rows
+    ]
 
 
 def build_organic_devices(db: Session, days: int, brand: str = None, tag: str = None):
@@ -606,6 +668,60 @@ def build_organic_competitors(db: Session, days: int = 90):
 
     set_cached(db, key, result)
     return result
+
+
+def build_organic_competitor_keywords(db: Session, domain: str, days: int = 90):
+    """Return per-keyword breakdown for a specific competitor.
+    Each row: keyword, your position, their position, who wins.
+    """
+    start = _period(days)
+
+    rows = db.execute(text("""
+        WITH our_queries AS (
+            SELECT DISTINCT query FROM organic_performance WHERE data_date >= :start
+        ),
+        competitor_rankings AS (
+            SELECT osr.keyword,
+                   MIN(osr.position) AS their_position
+            FROM organic_serp_results osr
+            JOIN our_queries oq ON LOWER(osr.keyword) = LOWER(oq.query)
+            WHERE osr.observed_date >= :start
+              AND osr.domain = :domain
+            GROUP BY osr.keyword
+        ),
+        fo_positions AS (
+            SELECT cr.keyword,
+                   cr.their_position,
+                   ROUND(AVG(op.position)::numeric, 1) AS your_position,
+                   SUM(op.clicks) AS clicks,
+                   SUM(op.impressions) AS impressions
+            FROM competitor_rankings cr
+            JOIN organic_performance op ON LOWER(op.query) = LOWER(cr.keyword)
+            WHERE op.data_date >= :start
+            GROUP BY cr.keyword, cr.their_position
+        )
+        SELECT fp.keyword,
+               fp.your_position,
+               fp.their_position,
+               fp.clicks,
+               fp.impressions,
+               CASE WHEN fp.your_position <= fp.their_position THEN 'you' ELSE 'them' END AS winner
+        FROM fo_positions fp
+        ORDER BY fp.clicks DESC NULLS LAST, fp.impressions DESC NULLS LAST
+        LIMIT 100
+    """), {"start": start, "domain": domain}).mappings().all()
+
+    return [
+        {
+            "keyword": r["keyword"],
+            "your_position": int(round(float(r["your_position"] or 0))),
+            "their_position": int(r["their_position"] or 0),
+            "clicks": int(r["clicks"] or 0),
+            "impressions": int(r["impressions"] or 0),
+            "winner": r["winner"],
+        }
+        for r in rows
+    ]
 
 
 # ── Competitor builders ──────────────────────────────────────────
